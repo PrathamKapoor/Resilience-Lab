@@ -1,0 +1,45 @@
+experiment:
+  id: RL-BENCH-006
+  name: cascading-failure
+  version: 1
+  description: Failure propagates through a staged dependency graph.
+
+workload:
+  type: closed_loop
+  clients: 50
+  arrival_rate: 200
+  duration: 40s
+  warmup: 5s
+
+failure:
+  - target: payment_service
+    type: http_503
+    mode: burst
+    probability: 0.6
+    start: 5s
+    duration: 10s
+  - target: inventory_service
+    type: http_500
+    mode: burst
+    probability: 0.8
+    start: 12s
+    duration: 10s
+
+policy:
+  retry:
+    enabled: true
+    max_attempts: 3
+  backoff:
+    type: exponential
+    base: 100ms
+    maximum: 5s
+    jitter: full
+  circuit_breaker:
+    enabled: true
+    threshold: 5
+    recovery_window: 10s
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1006

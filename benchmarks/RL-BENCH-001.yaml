@@ -1,0 +1,33 @@
+experiment:
+  id: RL-BENCH-001
+  name: intermittent-errors
+  version: 1
+  description: Random dependency failures at a configurable probability.
+
+workload:
+  type: closed_loop
+  clients: 50
+  arrival_rate: 200
+  duration: 30s
+  warmup: 5s
+
+failure:
+  - target: payment_service
+    type: http_503
+    mode: random
+    probability: 0.10
+
+policy:
+  retry:
+    enabled: true
+    max_attempts: 3
+  backoff:
+    type: exponential
+    base: 100ms
+    maximum: 5s
+    jitter: full
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1001

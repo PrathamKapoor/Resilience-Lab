@@ -1,0 +1,91 @@
+"""Human-readable report and automatic analysis generation."""
+
+from __future__ import annotations
+
+from resiliencelab.analysis.statistics import summarize
+from resiliencelab.experiments.result import ExperimentResult
+
+
+def _fmt(value: float, ndigits: int = 4) -> str:
+    if value == float("inf"):
+        return "inf"
+    if value != value:
+        return "nan"
+    return f"{value:.{ndigits}f}"
+
+
+def _summary_line(label: str, values: list[float], higher_is_better: bool = True) -> str:
+    stats = summarize(values)
+    if "mean" not in stats:
+        return f"- **{label}**: no data"
+    return (
+        f"- **{label}**: mean={_fmt(stats['mean'])} "
+        f"(95% CI [{_fmt(stats['ci_low'])}, {_fmt(stats['ci_high'])}])"
+    )
+
+
+def automatic_analysis(result: ExperimentResult) -> str:
+    runs = result.runs
+    if not runs:
+        return "No runs recorded."
+    availability = [r.summary.availability for r in runs]
+    p95 = [r.summary.latency_p95 for r in runs]
+    p99 = [r.summary.latency_p99 for r in runs]
+    amplification = [r.summary.amplifications.get("requests", 0.0) for r in runs]
+    error_rate = [r.summary.error_rate for r in runs]
+    recovery = [r.recovery.time_to_recovery for r in runs]
+
+    lines = [
+        "RESULT SUMMARY",
+        "",
+        f"Policy: {result.policy_name}",
+        "",
+        "Observed (mean over repetitions, 95% CI reported):",
+        _summary_line("availability", availability),
+        _summary_line("p95 latency (s)", p95, higher_is_better=False),
+        _summary_line("p99 latency (s)", p99, higher_is_better=False),
+        _summary_line("error rate", error_rate, higher_is_better=False),
+        _summary_line("failure amplification", amplification, higher_is_better=False),
+        _summary_line("time to recovery (s)", recovery, higher_is_better=False),
+        "",
+        "Statistical confidence: 95% confidence intervals reported for primary metrics.",
+        "",
+        "Recommendation: see comparison and interaction analysis for evidence-based ranking.",
+    ]
+    return "\n".join(lines)
+
+
+def build_report(result: ExperimentResult) -> str:
+    spec = result.experiment
+    sections = [
+        f"# Experiment Report: {spec.name}",
+        "",
+        f"- **Experiment ID**: `{spec.id}`",
+        f"- **Policy**: {result.policy_name}",
+        f"- **Config SHA256**: `{result.config_hash}`",
+        f"- **Repetitions**: {len(result.runs)}",
+        "",
+        "## Configuration",
+        "```",
+        f"failure targets: {[f.target for f in spec.failure]}",
+        f"failure kinds: {[f.type.value for f in spec.failure]}",
+        f"workload: {spec.workload.type.value}, {spec.workload.clients} clients",
+        "```",
+        "",
+        "## Results",
+    ]
+    metrics_per_run = result.metrics_per_run()
+    for metric in [
+        "availability",
+        "throughput",
+        "latency_p95",
+        "latency_p99",
+        "amplification",
+        "recovery_time",
+        "error_rate",
+        "timeout_rate",
+    ]:
+        values = [m[metric] for m in metrics_per_run]
+        sections.append(_summary_line(metric, values))
+    sections += ["", "## Automatic Analysis", "", automatic_analysis(result), ""]
+    return "\n".join(sections)

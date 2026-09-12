@@ -1,0 +1,29 @@
+experiment:
+  id: RL-BENCH-004
+  name: dependency-saturation
+  version: 1
+  description: Dependency capacity is deliberately constrained.
+
+workload:
+  type: closed_loop
+  clients: 100
+  arrival_rate: 400
+  duration: 30s
+  warmup: 5s
+
+failure:
+  - target: payment_service
+    type: saturation
+    mode: constant
+    probability: 1.0
+
+policy:
+  concurrency:
+    enabled: true
+    limit: 25
+    queue_limit: 50
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1004

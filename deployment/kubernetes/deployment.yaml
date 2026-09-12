@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resiliencelab-api
+  labels:
+    app: resiliencelab-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: resiliencelab-api
+  template:
+    metadata:
+      labels:
+        app: resiliencelab-api
+    spec:
+      containers:
+        - name: api
+          image: resiliencelab:0.1.0
+          ports:
+            - containerPort: 8000
+          env:
+            - name: RESILIENCELAB_STORE
+              value: /data/results
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          readinessProbe:
+            httpGet:
+              path: /api/v1/workloads
+              port: 8000
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /api/v1/workloads
+              port: 8000
+            periodSeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
