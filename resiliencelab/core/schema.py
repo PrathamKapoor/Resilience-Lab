@@ -34,11 +34,68 @@ class SeedStrategy(str, Enum):
     EXPLICIT = "explicit"
 
 
+class ServiceSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    depends_on: list[str] = Field(default_factory=list)
+
+
 class SystemSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     replicas: int = Field(default=1, ge=1)
     workers_per_replica: int = Field(default=1, ge=1)
+    services: list[ServiceSpec] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_graph(self) -> SystemSpec:
+        names = [s.name for s in self.services]
+        if len(set(names)) != len(names):
+            raise ValueError("service names must be unique")
+        known = set(names)
+        for service in self.services:
+            for dependency in service.depends_on:
+                if dependency not in known:
+                    raise ValueError(
+                        f"service {service.name!r} depends on unknown service {dependency!r}"
+                    )
+                if dependency == service.name:
+                    raise ValueError(f"service {service.name!r} cannot depend on itself")
+        visited: dict[str, int] = {}
+
+        def visit(name: str, chain: list[str]) -> None:
+            state = visited.get(name, 0)
+            if state == 1:
+                raise ValueError(f"cyclic service dependency: {' -> '.join([*chain, name])}")
+            if state == 2:
+                return
+            visited[name] = 1
+            target = next(s for s in self.services if s.name == name)
+            for dependency in target.depends_on:
+                visit(dependency, [*chain, name])
+            visited[name] = 2
+
+        for name in names:
+            visit(name, [])
+        return self
+
+    def call_order(self) -> list[str]:
+        ordered: list[str] = []
+        placed = set()
+
+        def place(name: str) -> None:
+            if name in placed:
+                return
+            target = next(s for s in self.services if s.name == name)
+            for dependency in target.depends_on:
+                place(dependency)
+            placed.add(name)
+            ordered.append(name)
+
+        for service in self.services:
+            place(service.name)
+        return ordered
 
 
 class WorkloadSpec(BaseModel):
@@ -184,4 +241,9 @@ class ExperimentSpec(BaseModel):
     def _check_warmup(self) -> ExperimentSpec:
         if self.workload.warmup >= self.workload.duration:
             raise ValueError("warmup must be shorter than total duration")
+        if self.system.services:
+            known = {s.name for s in self.system.services}
+            for failure in self.failure:
+                if failure.target not in known:
+                    raise ValueError(f"failure target {failure.target!r} is not a declared service")
         return self

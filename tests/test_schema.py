@@ -68,6 +68,80 @@ def test_warmup_longer_than_duration_rejected() -> None:
         )
 
 
+def test_service_graph_accepted_and_ordered() -> None:
+    spec = parse_experiment(
+        {
+            "experiment": {"id": "exp_g", "name": "g"},
+            "system": {
+                "services": [
+                    {"name": "inventory_service", "depends_on": ["payment_service"]},
+                    {"name": "payment_service"},
+                ]
+            },
+            "failure": [{"target": "inventory_service"}],
+        }
+    )
+    assert spec.system.call_order() == ["payment_service", "inventory_service"]
+
+
+def test_unknown_failure_target_rejected() -> None:
+    with pytest.raises((ValidationError, ConfigValidationError)):
+        validate_data(
+            {
+                "experiment": {"id": "bad", "name": "bad"},
+                "system": {"services": [{"name": "payment_service"}]},
+                "failure": [{"target": "unknown_service"}],
+            }
+        )
+
+
+def test_legacy_config_accepts_any_target() -> None:
+    spec = parse_experiment(
+        {
+            "experiment": {"id": "exp_l", "name": "l"},
+            "failure": [{"target": "whatever_service"}],
+        }
+    )
+    assert spec.failure[0].target == "whatever_service"
+
+
+def test_duplicate_service_names_rejected() -> None:
+    with pytest.raises((ValidationError, ConfigValidationError)):
+        validate_data(
+            {
+                "experiment": {"id": "bad", "name": "bad"},
+                "system": {
+                    "services": [{"name": "a"}, {"name": "a"}],
+                },
+            }
+        )
+
+
+def test_unknown_dependency_rejected() -> None:
+    with pytest.raises((ValidationError, ConfigValidationError)):
+        validate_data(
+            {
+                "experiment": {"id": "bad", "name": "bad"},
+                "system": {"services": [{"name": "a", "depends_on": ["ghost"]}]},
+            }
+        )
+
+
+def test_cyclic_services_rejected() -> None:
+    with pytest.raises((ValidationError, ConfigValidationError)):
+        validate_data(
+            {
+                "experiment": {"id": "bad", "name": "bad"},
+                "system": {
+                    "services": [
+                        {"name": "a", "depends_on": ["b"]},
+                        {"name": "b", "depends_on": ["a"]},
+                    ],
+                },
+            }
+        )
+
+
 def test_round_trip_dump_and_reload(tmp_path) -> None:
     spec = parse_experiment(
         {

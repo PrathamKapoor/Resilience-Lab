@@ -19,7 +19,7 @@ from resiliencelab.metrics.transforms import summarize_downstream, summarize_req
 from resiliencelab.resilience.circuit_breaker import CircuitState
 from resiliencelab.resilience.jitter import Rng
 from resiliencelab.services.client import ResilientClient
-from resiliencelab.services.dependency import DependencyService
+from resiliencelab.services.dependency import FAULT_RNG_SALT, DependencyService
 from resiliencelab.services.sut import ServiceResponse, SystemUnderTest
 from resiliencelab.workloads.generator import WorkloadGenerator
 
@@ -59,12 +59,22 @@ class ExperimentRunner:
             return [int(rng.integers(0, 2**31 - 1)) for _ in range(count)]
         return [base + i for i in range(count)]
 
-    def _injectors(self, spec: ExperimentSpec, warmup: float) -> list[FaultInjector]:
-        injectors: list[FaultInjector] = []
+    def _service_names(self, spec: ExperimentSpec) -> list[str]:
+        if spec.system.services:
+            return list(spec.system.call_order())
+        return ["payment_service"]
+
+    def _injectors_by_service(
+        self, spec: ExperimentSpec, warmup: float
+    ) -> dict[str, list[FaultInjector]]:
+        routed: dict[str, list[FaultInjector]] = {}
         for failure in spec.failure:
             fault_spec = replace(build_fault_spec(failure), start=failure.start + warmup)
-            injectors.append(FaultInjector(fault_spec))
-        return injectors
+            if spec.system.services:
+                routed.setdefault(failure.target, []).append(FaultInjector(fault_spec))
+            else:
+                routed.setdefault("payment_service", []).append(FaultInjector(fault_spec))
+        return routed
 
     async def _run_once(self, spec: ExperimentSpec, seed: int, index: int) -> RunResult:
         run_id = f"{spec.id}/run-{index}"
@@ -83,20 +93,35 @@ class ExperimentRunner:
             )
 
         warmup = spec.workload.warmup
-        injectors = self._injectors(spec, warmup)
-        dependency = DependencyService("payment_service", injectors, seed=seed, clock=clock)
+        routed = self._injectors_by_service(spec, warmup)
+        names = self._service_names(spec)
+        dependencies = {
+            name: DependencyService(
+                name,
+                routed.get(name, []),
+                seed=seed,
+                clock=clock,
+                salt=FAULT_RNG_SALT + index,
+            )
+            for index, name in enumerate(names)
+        }
         dep_client = ResilientClient(policy, metrics)
 
         async def downstream(request_id: int, rng: Rng) -> object:
-            async def operation() -> None:
-                await dependency.invoke(seed, request_id)
+            result: object = None
+            for name in names:
+                dependency = dependencies[name]
 
-            return await dep_client.execute(
-                operation,
-                rng=rng,
-                request_id=request_id,
-                dependency=dependency.name,
-            )
+                async def operation(dep: DependencyService = dependency) -> None:
+                    await dep.invoke(seed, request_id)
+
+                result = await dep_client.execute(
+                    operation,
+                    rng=rng,
+                    request_id=request_id,
+                    dependency=name,
+                )
+            return result
 
         sut = SystemUnderTest("order_api", downstream, seed=seed)
 
