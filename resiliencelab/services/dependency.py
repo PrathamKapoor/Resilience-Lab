@@ -28,6 +28,7 @@ class DependencyService:
         clock: Clock | None = None,
         hang_duration: float = 30.0,
         saturation_delay: float = 0.05,
+        salt: int = FAULT_RNG_SALT,
     ) -> None:
         self.name = name
         self.injectors = list(injectors or [])
@@ -35,6 +36,7 @@ class DependencyService:
         self.clock = clock if clock is not None else Clock()
         self.hang_duration = hang_duration
         self.saturation_delay = saturation_delay
+        self.salt = salt
         self.app = FastAPI(title=f"ResilienceLab dependency: {name}")
         self._register_routes()
 
@@ -49,7 +51,7 @@ class DependencyService:
         return None
 
     async def invoke(self, seed: int, request_id: int) -> None:
-        rng = generator_for(seed, request_id, FAULT_RNG_SALT)
+        rng = generator_for(seed, request_id, self.salt)
         event = self._evaluate(self.now(), rng)
         if event is None:
             return

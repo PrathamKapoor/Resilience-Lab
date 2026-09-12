@@ -4,6 +4,12 @@ experiment:
   version: 1
   description: Failure propagates through a staged dependency graph.
 
+system:
+  services:
+    - name: payment_service
+    - name: inventory_service
+      depends_on: [payment_service]
+
 workload:
   type: closed_loop
   clients: 50

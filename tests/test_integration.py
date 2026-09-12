@@ -4,6 +4,7 @@ import pytest
 
 from resiliencelab.core.config import parse_experiment
 from resiliencelab.experiments.runner import ExperimentRunner
+from resiliencelab.metrics.collector import MetricsCollector
 
 
 def _spec(**overrides) -> dict:
@@ -79,3 +80,55 @@ async def test_retry_amplifies_downstream_calls() -> None:
     result = await runner.run_async(spec)
     run = result.runs[0]
     assert run.summary.amplifications["requests"] >= 1.0
+
+
+def _cascade_spec() -> dict:
+    config = _spec()
+    experiment = config["experiment"]
+    experiment["system"] = {
+        "services": [
+            {"name": "payment_service"},
+            {"name": "inventory_service", "depends_on": ["payment_service"]},
+        ]
+    }
+    experiment["failure"] = [
+        {
+            "target": "inventory_service",
+            "type": "http_500",
+            "mode": "burst",
+            "probability": 1.0,
+            "duration": "5s",
+        }
+    ]
+    return config
+
+
+@pytest.mark.asyncio
+async def test_cascade_across_two_dependencies() -> None:
+    spec = parse_experiment(_cascade_spec())
+    runner = ExperimentRunner()
+    result = await runner.run_async(spec)
+    run = result.runs[0]
+    assert run.summary.total > 0
+    assert run.summary.availability == pytest.approx(0.0)
+    touched = {
+        r.get("dependency")
+        for r in run.records
+        if r.get("kind") == MetricsCollector.DOWNSTREAM and r.get("dependency") is not None
+    }
+    assert touched == {"payment_service", "inventory_service"}
+
+
+@pytest.mark.asyncio
+async def test_faults_routed_to_declared_target_only() -> None:
+    spec = parse_experiment(_cascade_spec())
+    runner = ExperimentRunner()
+    result = await runner.run_async(spec)
+    records = result.runs[0].records
+    by_dependency: dict[str, list[bool]] = {}
+    for r in records:
+        if r.get("kind") == MetricsCollector.DOWNSTREAM:
+            by_dependency.setdefault(str(r.get("dependency")), []).append(bool(r.get("success")))
+    assert set(by_dependency) == {"payment_service", "inventory_service"}
+    assert by_dependency["payment_service"] and all(by_dependency["payment_service"])
+    assert by_dependency["inventory_service"] and not any(by_dependency["inventory_service"])

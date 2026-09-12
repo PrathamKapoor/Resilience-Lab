@@ -39,6 +39,10 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
         "name": result.experiment.name,
         "policy_name": result.policy_name,
         "config_hash": result.config_hash,
+        "topology": [
+            {"name": s.name, "depends_on": list(s.depends_on)}
+            for s in result.experiment.system.services
+        ],
         "metrics_per_run": result.metrics_per_run(),
     }
     record("experiment.json", json.dumps(summary, indent=2).encode("utf-8"))

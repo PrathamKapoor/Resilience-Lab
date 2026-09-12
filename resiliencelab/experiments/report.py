@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from resiliencelab.analysis.statistics import summarize
+from resiliencelab.core.schema import ExperimentSpec
 from resiliencelab.experiments.result import ExperimentResult
 
 
@@ -55,6 +56,16 @@ def automatic_analysis(result: ExperimentResult) -> str:
     return "\n".join(lines)
 
 
+def _topology_line(spec: ExperimentSpec) -> str:
+    if not spec.system.services:
+        return "services: [payment_service (default single dependency)]"
+    described = [
+        s.name + (f" (depends_on={','.join(s.depends_on)})" if s.depends_on else "")
+        for s in spec.system.services
+    ]
+    return f"services: {described}"
+
+
 def build_report(result: ExperimentResult) -> str:
     spec = result.experiment
     sections = [
@@ -69,6 +80,7 @@ def build_report(result: ExperimentResult) -> str:
         "```",
         f"failure targets: {[f.target for f in spec.failure]}",
         f"failure kinds: {[f.type.value for f in spec.failure]}",
+        _topology_line(spec),
         f"workload: {spec.workload.type.value}, {spec.workload.clients} clients",
         "```",
         "",

@@ -34,5 +34,16 @@ Key design decisions:
   exception taxonomy (`CallFailure` and subclasses).
 - Warmup traffic is generated but never recorded: the collector is gated so
   warmup cannot inflate amplification or latency statistics.
+- Multi-service topology: `system.services` declares a dependency graph
+  (`name` plus `depends_on`). The runner instantiates one
+  `DependencyService` per entry, routes each `failure` entry's injectors to
+  the service named by its `target` (validated against the graph), and the
+  SUT fans out sequentially in topological (`call_order`) order,
+  short-circuiting on the first failure — so an upstream outage cascades by
+  sparing downstream services the call. Each service draws faults from an
+  independent per-service salted RNG stream, keeping same-seed runs
+  reproducible. Omitting `services` preserves the legacy single
+  `payment_service` behavior. RL-BENCH-006 exercises this with a staged
+  payment/inventory cascade.
 - Every result carries provenance: configuration hash, environment capture,
   seeds, and hashed raw records.
