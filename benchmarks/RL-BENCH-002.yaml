@@ -1,0 +1,33 @@
+experiment:
+  id: RL-BENCH-002
+  name: latency-injection
+  version: 1
+  description: Controlled latency degradation on the dependency.
+
+workload:
+  type: closed_loop
+  clients: 50
+  arrival_rate: 200
+  duration: 30s
+  warmup: 5s
+
+failure:
+  - target: payment_service
+    type: latency
+    mode: constant
+    probability: 1.0
+    latency_distribution: normal
+    latency_mean: 200ms
+    latency_std: 40ms
+
+policy:
+  timeout:
+    total: 1s
+  concurrency:
+    enabled: true
+    limit: 50
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1002

@@ -1,0 +1,39 @@
+experiment:
+  id: RL-BENCH-003
+  name: burst-outage
+  version: 1
+  description: Dependency becomes unavailable for a defined interval.
+
+workload:
+  type: closed_loop
+  clients: 50
+  arrival_rate: 200
+  duration: 30s
+  warmup: 5s
+
+failure:
+  - target: payment_service
+    type: http_503
+    mode: burst
+    probability: 1.0
+    start: 5s
+    duration: 15s
+
+policy:
+  retry:
+    enabled: true
+    max_attempts: 3
+  backoff:
+    type: exponential
+    base: 100ms
+    maximum: 5s
+    jitter: full
+  circuit_breaker:
+    enabled: true
+    threshold: 5
+    recovery_window: 10s
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1003

@@ -1,0 +1,94 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "resiliencelab"
+version = "0.1.0"
+description = "A reproducible fault-injection, resilience benchmarking, and adaptive policy evaluation platform for distributed services."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "ResilienceLab Contributors" }]
+keywords = [
+    "resilience",
+    "fault-injection",
+    "distributed-systems",
+    "chaos-engineering",
+    "benchmarking",
+    "circuit-breaker",
+    "retry",
+    "backoff",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Distributed Computing",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = [
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "httpx>=0.25",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "typer>=0.9",
+    "rich>=13.6",
+    "PyYAML>=6.0",
+    "numpy>=1.26",
+    "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+parquet = ["pyarrow>=14.0"]
+api = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.1",
+    "hypothesis>=6.88",
+    "ruff>=0.1",
+    "mypy>=1.8",
+    "types-PyYAML>=6.0",
+    "scipy-stubs>=1.14",
+]
+
+[project.scripts]
+resiliencelab = "resiliencelab.cli.app:main"
+
+[project.urls]
+Homepage = "https://github.com/example/resiliencelab"
+Documentation = "https://github.com/example/resiliencelab"
+Repository = "https://github.com/example/resiliencelab"
+
+[tool.setuptools.packages.find]
+include = ["resiliencelab*"]
+exclude = ["tests*", "docs*", "paper*"]
+
+[tool.setuptools.package-data]
+resiliencelab = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "C4", "ASYNC"]
+ignore = ["E501", "B008", "SIM108", "C901", "UP042", "N818"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"

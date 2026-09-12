@@ -1,0 +1,35 @@
+experiment:
+  id: RL-BENCH-005
+  name: retry-storm
+  version: 1
+  description: Measure downstream request amplification under retries.
+
+workload:
+  type: closed_loop
+  clients: 50
+  arrival_rate: 200
+  duration: 30s
+  warmup: 5s
+
+failure:
+  - target: payment_service
+    type: http_503
+    mode: burst
+    probability: 1.0
+    start: 5s
+    duration: 15s
+
+policy:
+  retry:
+    enabled: true
+    max_attempts: 3
+  backoff:
+    type: fixed
+    base: 25ms
+    maximum: 25ms
+    jitter: none
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1005

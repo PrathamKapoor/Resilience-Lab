@@ -1,0 +1,48 @@
+experiment:
+  id: RL-BENCH-008
+  name: non-stationary-failure
+  version: 1
+  description: Failure characteristics change during execution.
+
+workload:
+  type: closed_loop
+  clients: 50
+  arrival_rate: 200
+  duration: 40s
+  warmup: 5s
+
+failure:
+  - target: payment_service
+    type: http_503
+    mode: ramp
+    probability: 0.9
+    start: 5s
+    duration: 15s
+  - target: payment_service
+    type: latency
+    mode: burst
+    probability: 0.5
+    start: 20s
+    duration: 15s
+    latency_distribution: lognormal
+    latency_mean: 150ms
+    latency_std: 0.6
+
+policy:
+  retry:
+    enabled: true
+    max_attempts: 3
+  backoff:
+    type: exponential
+    base: 100ms
+    maximum: 5s
+    jitter: full
+  circuit_breaker:
+    enabled: true
+    threshold: 5
+    recovery_window: 10s
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1008

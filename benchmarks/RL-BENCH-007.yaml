@@ -1,0 +1,44 @@
+experiment:
+  id: RL-BENCH-007
+  name: recovery-dynamics
+  version: 1
+  description: Measure recovery following dependency restoration.
+
+workload:
+  type: closed_loop
+  clients: 50
+  arrival_rate: 200
+  duration: 40s
+  warmup: 5s
+
+failure:
+  - target: payment_service
+    type: http_503
+    mode: burst
+    probability: 1.0
+    start: 5s
+    duration: 20s
+
+policy:
+  retry:
+    enabled: true
+    max_attempts: 3
+  backoff:
+    type: exponential
+    base: 100ms
+    maximum: 5s
+    jitter: full
+  circuit_breaker:
+    enabled: true
+    threshold: 5
+    recovery_window: 5s
+
+repetitions:
+  count: 10
+  seed_strategy: deterministic
+  base_seed: 1007
+
+analysis:
+  availability_threshold: 0.9
+  stability_window: 3s
+  baseline_window: 5s

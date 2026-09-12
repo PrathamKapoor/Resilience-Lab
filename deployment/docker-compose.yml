@@ -1,0 +1,50 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deployment/docker/Dockerfile
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      RESILIENCELAB_STORE: /data/results
+    volumes:
+      - resiliencelab-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/workloads')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-resiliencelab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-resiliencelab}
+      POSTGRES_DB: ${POSTGRES_DB:-resiliencelab}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-resiliencelab}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  resiliencelab-data:
+  pgdata:
+  redisdata:
