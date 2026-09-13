@@ -34,6 +34,9 @@ Key design decisions:
   exception taxonomy (`CallFailure` and subclasses).
 - Warmup traffic is generated but never recorded: the collector is gated so
   warmup cannot inflate amplification or latency statistics.
+- Workloads are either client-driven (`closed_loop`) or arrival processes whose
+  inter-arrival gaps are pure, seeded functions of elapsed time (`workloads/arrivals.py`);
+  see `docs/workloads.md` for the mode semantics and latency-attribution model.
 - Multi-service topology: `system.services` declares a dependency graph
   (`name` plus `depends_on`). The runner instantiates one
   `DependencyService` per entry, routes each `failure` entry's injectors to

@@ -124,6 +124,61 @@ def summarize_requests(records: list[Record]) -> RequestSummary:
     return summary
 
 
+def latency_components(records: list[Record]) -> dict[str, float]:
+    """Decompose mean request latency into its measured components.
+
+    Definitions (all in seconds, wall-clock):
+
+    - ``total``:   mean ``request.latency`` — full time from request issue to
+      response or exception.
+    - ``service``: mean per-request sum of ``downstream.latency`` — simulated
+      dependency processing across all attempts (fault/saturation delay
+      included, scheduled backoff excluded).
+    - ``retry``:   mean per-request sum of ``retry`` event delays — scheduled
+      backoff sleeps between attempts.
+    - ``other``:   ``total - service - retry`` — the residual: concurrency
+      queue wait, circuit-open wait, timeout waits, and event-loop scheduling
+      overhead.
+
+    Returns zeroed fields when no request records are present.
+    """
+    reqs = requests(records)
+    if not reqs:
+        return {"total": 0.0, "service": 0.0, "retry": 0.0, "other": 0.0}
+
+    service_by_request: dict[int, float] = {}
+    retry_by_request: dict[int, float] = {}
+    for row in downstreams(records):
+        rid = row.get("request_id")
+        if rid is not None:
+            service_by_request[rid] = service_by_request.get(rid, 0.0) + float(
+                row.get("latency") or 0.0
+            )
+    for row in events(records):
+        if row.get("event") == "retry":
+            rid = row.get("request_id")
+            if rid is not None:
+                retry_by_request[rid] = retry_by_request.get(rid, 0.0) + float(
+                    row.get("delay") or 0.0
+                )
+
+    request_ids = [r["request_id"] for r in reqs]
+    totals = [float(r["latency"]) for r in reqs if r.get("latency") is not None]
+    services = [service_by_request.get(rid, 0.0) for rid in request_ids]
+    retries = [retry_by_request.get(rid, 0.0) for rid in request_ids]
+    others = [t - s - r for t, s, r in zip(totals, services, retries, strict=True)]
+
+    def _mean(values: list[float]) -> float:
+        return mean(values) if values else 0.0
+
+    return {
+        "total": _mean(totals),
+        "service": _mean(services),
+        "retry": _mean(retries),
+        "other": _mean(others),
+    }
+
+
 def summarize_downstream(records: list[Record]) -> dict[str, float]:
     ds = downstreams(records)
     if not ds:

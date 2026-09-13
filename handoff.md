@@ -2,108 +2,94 @@
 
 ## 1. Current Phase
 
-- **Phase**: Greenfield build (Phase 1 of the larger ResilienceLab vision: experimental core → resilience engine → fault lab → topology → observability → statistics → product → reproducibility → adaptive → deployment → research campaign).
-- **Subphase just completed**: Multi-service topology (handoff §10 Option A). Extended `ExperimentSpec.system` with a service graph, per-target fault routing, N-dependency fan-out with cascade short-circuiting, topology in reports/artifacts, RL-BENCH-006 as a true two-service cascade, 8 new tests.
-- **Overall objective**: A reproducible fault-injection and resilience-benchmarking platform for distributed services, suitable for deployment, hackathon demo, and a research paper.
-- **Status**: Subphase **complete**. Working tree has the topology changes uncommitted (8 files, +255/−17); all quality gates green (67 tests, ruff, ruff format, mypy strict).
+- **Vision** (all phases): evolve ResilienceLab into a 10/10 research-grade, reproducible, deployable resilience experimentation platform. See the master prompt's phase list below.
+- **Subphase just completed**: **Phase 1 — Scientific correctness** (workload arrival semantics + latency measurement attribution + metric definitions). This was the highest-impact correctness gap per the master prompt (it said: "The system must never silently claim to execute a workload type that it does not actually implement").
+- **Overall objective**: a reproducible simulated resilience laboratory for experimentally evaluating resilience policies under controlled workloads/failures. In-process fake services are a deliberate methodological choice; deployment targets the *control plane*, not the simulated services.
+- **Status**: Phase 1 **complete**. Tree has uncommitted Phase 1 changes (8 files). All gates green (79 tests, ruff, ruff format, mypy strict).
 
 ## 2. Work Completed
 
-### Prior work (commits `324ac3b`, `3af7af1`) — unchanged, see git log
-Core platform (resilience engine, fault injection, schema, services, workloads, metrics, analysis, runner, artifacts, CLI, REST API, benchmarks) plus hardening (warmup-gated metrics, starvation yield, in-process execution, BackgroundTasks API, non-finite stats guards, strict typing). Details in previous handoff version (git show `1c782de:handoff.md` if needed).
+### Prior subphases (commits `324ac3b`, `3af7af1`, `2a98643`) — unchanged
+Core platform (resilience engine, faults, schema, services, workloads, metrics, analysis, runner, artifacts, CLI, REST API, benchmarks), hardening (warmup-gated metrics, starvation yield, in-process execution, BackgroundTasks API, non-finite stats), and multi-service topology (service graph, per-target routing, cascade fan-out). See `git log`.
 
-### Multi-service topology (this session, uncommitted)
-- **Service graph schema** (`core/schema.py`): new `ServiceSpec` (`name`, `depends_on`); `SystemSpec.services` (default `[]` = legacy single-service mode); graph validator (unique names, known deps, no self-deps, cycle detection); `SystemSpec.call_order()` topological order (stable, declared-order tiebreak); `ExperimentSpec` validator requiring `failure.target` to match a declared service when `services` is non-empty. Legacy configs with arbitrary targets still validate when `services` is empty.
-- **Per-service fault streams** (`services/dependency.py`): new `salt` param (default `FAULT_RNG_SALT`, so single-service determinism is byte-identical); `invoke()` uses `generator_for(seed, request_id, self.salt)`.
-- **Runner fan-out** (`experiments/runner.py`): `_injectors_by_service()` groups injectors by `FailureSpec.target` in graph mode, legacy single-key mode otherwise; `_service_names()` returns `call_order()` or `["payment_service"]`; `_run_once` builds one `DependencyService` per service (salt offset by index) and the SUT `downstream` calls them sequentially in call order, short-circuiting on first failure (upstream outage cascades by sparing downstream calls). Single shared `ResilientClient`/policy across services.
-- **Report/artifacts**: `report.build_report` Configuration block gains a `services:` line (names + `depends_on`); `artifacts.write_artifacts` `experiment.json` summary gains additive `topology: [{name, depends_on}]`. `configuration.yaml` already carried `system.services`.
-- **RL-BENCH-006** now declares `system.services: [payment_service, inventory_service(depends_on=payment_service)]`; its two staged faults hit distinct services. Other benchmarks unchanged (legacy mode).
-- **Tests** (8 new): `test_schema.py` — graph accepted + ordered, unknown target rejected, legacy arbitrary target accepted, duplicates/unknown-dep/cycle rejected; `test_integration.py` — two-service cascade (availability 0, both services touched), fault routing isolation (payment all-success, inventory all-failed).
-- **Docs**: `docs/architecture.md` topology paragraph.
-- **E2E verified**: `validate` + `run` (1 rep: availability 0.2732) + `report` on RL-BENCH-006; report shows the topology block.
+### Phase 1 — Scientific correctness (this session, uncommitted)
+- **Workload arrival model** (`workloads/arrivals.py`, NEW): `ArrivalModel.gap(elapsed, rng)` computes inter-arrival gaps as a pure, seeded function of elapsed time. Implemented distinct semantics for all 7 `WorkloadType`s (closed_loop has no arrival model and raises). Fixed the previous bug where `burst`/`periodic`/`random` silently behaved as closed-loop.
+  - `constant_rate`: fixed `1/rate`; `open_loop`: exponential (poisson/exponential dist) or fixed (constant dist); `random`: Uniform(0, 2/rate); `burst`: `burst_size` fast gaps then `burst_interval` idle; `periodic`: sinusoidal rate with `period`/`burstiness`; `ramp`: linear 10%→full over `duration`.
+- **Generator refactor** (`workloads/generator.py`): `_drive` now dispatches closed_loop → `_closed_loop` (unchanged, starvation fix intact) and everything else → `_arrival_loop` (single loop consuming `ArrivalModel.gap`). Removed the old `_open_loop`/`_ramp`/`_next_gap` and the silent fallthrough.
+- **Schema** (`core/schema.py`): added backward-compatible `WorkloadSpec` fields `burst_size` (default 10), `burst_interval` (1s), `period` (1s).
+- **Latency measurement semantics** (`metrics/transforms.py`): new `latency_components(records)` decomposes mean request latency into `total` / `service` (Σ per-attempt downstream latency) / `retry` (Σ retry-event delays) / `other` (queue + timeout + scheduling residual). Report (`experiments/report.py`) now emits a "Measurement semantics" section with these numbers plus explicit units/definitions.
+- **Tests** (`tests/test_workloads.py`, NEW — 12 tests): deterministic proofs that each mode produces distinct traffic (fixed vs stochastic vs burst pattern vs oscillation vs ramp), stochastic reproducibility, and latency decomposition correctness.
+- **Docs**: `docs/workloads.md` (NEW) documenting mode semantics, fields, and latency attribution; `docs/architecture.md` pointer added.
 
-## 3. Files Changed
+## 3. Files Changed (uncommitted)
 
-Uncommitted topology work (verify with `git status --short`, `git diff --stat`):
+- `resiliencelab/workloads/arrivals.py` (NEW), `resiliencelab/workloads/generator.py`
+- `resiliencelab/core/schema.py`, `resiliencelab/metrics/transforms.py`, `resiliencelab/experiments/report.py`
+- `tests/test_workloads.py` (NEW), `docs/workloads.md` (NEW), `docs/architecture.md`
+- Verify with `git status --short`, `git diff --stat`.
 
-- `resiliencelab/core/schema.py` — `ServiceSpec`, `SystemSpec.services` + `_check_graph` + `call_order`, `ExperimentSpec` target validator (+62).
-- `resiliencelab/services/dependency.py` — `salt` param (+4/−2).
-- `resiliencelab/experiments/runner.py` — `_service_names`, `_injectors_by_service`, N-service `_run_once` (+57/−17); old `_injectors` removed.
-- `resiliencelab/experiments/report.py` — `_topology_line` + config line (+12).
-- `resiliencelab/experiments/artifacts.py` — `topology` in `experiment.json` summary (+4).
-- `benchmarks/RL-BENCH-006.yaml` — `system.services` (+6).
-- `tests/test_schema.py` (+74), `tests/test_integration.py` (+53).
-- `docs/architecture.md` — topology paragraph.
-- Prior commits `324ac3b`, `3af7af1` unchanged; see §2 and `git log --oneline`.
+## 4. Architecture / State (VERIFIED)
 
-## 4. Current Architecture / State
+- **Execution model**: fully in-process. `ExperimentRunner.run_async` → per seed: fresh `Clock`, `MetricsCollector`, `ResiliencePolicy`, N `DependencyService`s (per graph node), one shared `ResilientClient`, `SystemUnderTest`, `WorkloadGenerator`. SUT fans out over dependencies in topological order, short-circuiting on first failure. No HTTP in hot path.
+- **Workloads**: `WorkloadGenerator.run` gates warmup via `MetricsCollector.set_recording`; closed-loop saturates against a `send` coroutine; all other modes drive an `ArrivalModel` gap sequence with `generator_for(seed, 200_000)`.
+- **Metrics flow**: `PolicyExecutor` emits `attempt`/`retry`/`rejected`; `ResilientClient` records `downstream` (per attempt, with `latency` = attempt duration) and `event` rows; workload records `request` rows (`latency` = total). Latency decomposition relies on `request_id` correlation across the three record kinds.
+- **Config**: `pyproject.toml` — ruff `E,F,I,N,UP,B,SIM,C4,ASYNC`, ignores `E501,B008,SIM108,C901,UP042,N818`; mypy strict `python_version=3.12`; pytest `asyncio_mode=auto`. Python 3.13.14, package installed editable `[dev,parquet]`.
 
-- **Execution model**: fully in-process. `ExperimentRunner.run_async` → per seed: fresh `Clock`, `MetricsCollector`, `ResiliencePolicy`, N `DependencyService`s (one per graph node, per-target injectors), one shared `ResilientClient`, `SystemUnderTest`, `WorkloadGenerator`. SUT fans out sequentially in `call_order`; first exception wins (maps to 503/504/429/5xx in `sut.handle`). No HTTP in hot path.
-- **Determinism**: per-request RNG = `generator_for(seed, request_id, service_salt)`; service index 0 keeps salt `FAULT_RNG_SALT` so legacy runs reproduce exactly. Timing metrics remain wall-clock/statistical only — do NOT assert exact cross-run record counts (a determinism test asserting equal `record_count` across runs was written and removed this session for that reason).
-- **Metrics flow**: unchanged; `downstream` rows carry the serving service in `dependency`. `failure_amplification = downstream_rows / request_rows` now counts fan-out calls (can exceed N per request under retries).
-- **Known approximation**: one shared policy (single circuit breaker / concurrency limiter / timeout) across all services. Per-service policies are a future extension.
-- **Config**: `pyproject.toml` — ruff selects `E,F,I,N,UP,B,SIM,C4,ASYNC`, ignores `E501,B008,SIM108,C901,UP042,N818`; mypy `strict=true`, `python_version="3.12"`; pytest `asyncio_mode=auto`. Python 3.13.14, package installed editable with `[dev,parquet]`.
+## 5. Decisions Made (all still hold)
 
-## 5. Decisions Made
+- In-process execution (nested-ASGI deadlock finding); `str, Enum`; `CallFailure` name; `Rng` protocol; timeout-vs-`DeadlineExceeded` contract; `recovery_time=inf` honesty; mypy target 3.12.
+- **Phase 1**: arrival gaps made *pure and seeded*; stochastic reproducibility asserted on the gap functions, never on wall-clock counts/timings. `closed_loop` explicitly has no arrival model.
+- Latency decomposition is **derived post-hoc** from existing records (no hot-path change), documented honestly; "other" includes timeout/queue/scheduling residual.
 
-- All prior decisions (§5 of previous handoff) still hold: in-process execution, `str, Enum`, `CallFailure` name, `Rng` protocol, timeout-vs-`DeadlineExceeded` contract, `recovery_time=inf`, mypy target 3.12.
-- **Sequential fan-out with short-circuit** (not parallel): models a dependency chain, keeps amplification accounting and the single-`downstream`-callable SUT interface unchanged.
-- **Shared policy across services** for this subphase; per-service policy maps left for later (would change `PolicySpec` shape).
-- **Strict target validation only in graph mode**: preserves backward compatibility of all existing YAMLs (their arbitrary targets collapse onto `payment_service` as before).
-- **`call_order()` on `SystemSpec`**: pure, testable, reused by runner.
-- **Additive artifact change only** (`topology` key in `experiment.json`); `reproduce` unaffected (it re-parses `configuration.yaml`, which already round-trips `services` via `dump_yaml`/`load_yaml`).
+## 6. Requirements & Constraints
 
-## 6. Requirements and Constraints
+- Preserve: warmup exclusion from ALL metric kinds; per-request seeded determinism (service-0 salt = `FAULT_RNG_SALT`); `max_attempts` = total attempts; amplification definition; `recovery_time=inf`; strict mypy + ruff + format clean (`make check`); no `python -m resiliencelab.cli.app` (use `resiliencelab` or `python -m resiliencelab`).
+- Do not add code comments unless asked; type hints + naming instead.
+- Do NOT misrepresent the in-process fake services as real microservices; simulation is deliberate.
+- Do not assert wall-clock equality in tests (duration-based runs vary); assert on seeded RNG behavior or single-run invariants.
 
-- Preserve: warmup exclusion from ALL metric kinds; per-request seeded determinism (service-0 salt unchanged); `max_attempts` = total attempts semantics; amplification definition; strict mypy + ruff + format clean (`make check`); no `python -m` invocation of `resiliencelab.cli.app` (use installed `resiliencelab` script or `python -m resiliencelab`).
-- Do not add code comments unless asked (project convention); type hints + clear naming instead.
-- Do not claim Docker verification — Docker is not installed here.
-- Benchmark YAMLs follow spec-style convention; `dump_yaml` emits spec-style (round-trips `services`).
-- Do not assert wall-clock-derived quantities (request counts, throughput) for exact cross-run equality in tests.
+## 7. Testing & Verification
 
-## 7. Testing and Verification
+- `python -m pytest` → **79 passed** (was 67; +12 workload/latency tests).
+- `ruff check`, `ruff format --check`, `mypy resiliencelab` (strict, 52 files) → clean.
+- CLI smoke (actually executed): `run` open_loop (availability 1.0, throughput 58.8) and `run` burst (availability 1.0) — both complete and produce artifact bundles.
+- Not verified: Docker/K8s, Postgres/Redis (unwired — known gap), full paper reproduction, per-service policies, non-closed-loop benchmark configs (all 8 benchmarks remain `closed_loop`).
 
-- `python -m pytest` → **67 passed** (was 59; +6 schema, +2 integration).
-- `ruff check`, `ruff format --check` (2 files auto-reformatted after edit), `mypy resiliencelab` (strict, 51 files) → all clean.
-- CLI E2E (actually executed): `validate` RL-BENCH-006; `run` 1 rep (availability 0.2732, amplification 0.55); `report` shows `services:` topology block.
-- Not verified: Docker build/run, Kubernetes apply, PostgreSQL/Redis integration (compose services provisioned but unused — registry is in-memory), `make reproduce-paper` full regeneration, per-service policies, parallel fan-out.
-- No known failing tests.
+## 8. Known Gaps (from master-prompt audit — VERIFIED)
 
-## 8. Known Issues / Risks
+1. `POST /experiments/{id}/cancel` → HTTP 501 (`api/app.py`).
+2. `make reproduce-paper` → `reproduce --all`, but no `--all` flag (broken).
+3. Postgres/Redis provisioned in compose but **unwired**; registry in-memory.
+4. No worker/job execution architecture; no auth/quotas.
+5. No dashboard UI.
+6. Policies shared across services (no per-service policy isolation).
+7. `endpoint_mix` / `payload_size` accepted but unwired.
+8. `paper/` outline only, not an executable research artifact.
+9. Adaptive policy (RL/bandits) documented but not implemented.
 
-- **Shared policy across services**: a breaker opened by one dependency sheds load for all; acceptable for cascade experiments, wrong for isolation studies. Next step if needed: `policy` per service (schema + runner + client wiring).
-- **Sequential fan-out only**: no parallel scatter-gather; `depends_on` currently affects order only, not conditional invocation (short-circuit already gives de-facto conditional behavior).
-- **Recovery detector needs post-failure observation**: unchanged from before.
-- **`bootstrap_ci` default 4000 resamples** can be slow on large record sets; fine at current scale.
-- **`record()` uses `threading.Lock`**; safe today (single event loop).
-- Debug artifacts in `%TEMP%\opencode` (`bench006/`, etc.) are scratch, not part of the repo.
+## 9. Next Phases (per master prompt, in order)
 
-## 9. Unfinished Work
+- **Phase 2 — Simulation model**: service processing latency, network latency/jitter, connection failures, queueing, service/dependency saturation, resource constraints (all controlled + documented).
+- **Phase 3 — Per-service policies**: `policy.<service>` overrides; add policy-isolation tests; keep backward compat.
+- **Phase 4 — Event model**: first-class structured `ExperimentStarted/RequestStarted/RetryScheduled/CircuitOpened/...` events with correlation context driving timelines/analysis.
+- **Phase 5 — Statistical/factorial upgrades** (interaction analysis, Pareto frontier, multiple comparisons).
+- **Phase 6 — Persistence + job queue/workers** (Postgres migrations, Redis/RQ or Celery).
+- **Phase 7 — Cancellation + lifecycle.** **Phase 8 — API productionization.** **Phase 9 — Dashboard.** **Phase 10 — Deployment/security/quotas.** **Phase 11 — Research artifact + `reproduce-paper`.** **Phase 12 — Adaptive policies.**
 
-Remaining larger-vision phases: observability plane (logs/traces), dashboard UI (only API+CLI exist), auth/quotas/isolation, worker scaling (Redis/RQ or Celery), per-service policies, parallel fan-out, adaptive policies (EWMA/AIMD → bandits/RL), full research campaign with figures, `make reproduce-paper` wiring. Extension points: `ResiliencePolicy` (mechanisms), `FaultSpec`/`DependencyService` (faults), `WorkloadGenerator` (arrivals), `analysis/` (metrics), `experiments/factorial.py` (factors), `SystemSpec.services` (topology shapes).
+Before starting any phase: run `make check`, read the relevant module, keep all three gates green after each change.
 
-## 10. Next Subphase
+## 10. Critical Context (bugs/decisions that shaped the code — do not regress)
 
-Suggested next step (pick one; do not start unprompted broad rewrites):
+- `await asyncio.sleep(0)` in `workloads/generator.py:_closed_loop` prevents event-loop starvation on fully-synchronous call chains — do not remove.
+- Warmup gating via `MetricsCollector.recording` — do not bypass; warmup writes no request/downstream rows.
+- Nested `httpx.ASGITransport` deadlocks → no HTTP in experiment path.
+- starlette ≥0.52 `TestClient` doesn't run `asyncio.create_task` fire-and-forget → API `/run` uses `BackgroundTasks`; `Runtime.submit` is the production path.
+- Never name scratch files after stdlib modules (`inspect.py` incident); scratch lives in `%TEMP%\opencode`.
+- PowerShell `Select-Object` truncates/wraps long lines — verify suspicious output against the file.
+- Git identity: `ResilienceLab <resiliencelab@example.com>`; no remote.
 
-**Option B — Dashboard** (carried over): minimal read-only web UI (experiment list, run status, comparison table, timeline chart) served alongside the API; reuse `/metrics`, `/timeline`, `/report` endpoints. Verify with TestClient + one live-boot check.
+## 11. Agent Instructions
 
-**Option C — Per-service policies**: allow `policy` overrides per service in the graph (e.g. breaker only on payment). Touches `PolicySpec` shape + runner client wiring; design first, keep legacy default.
-
-Before implementing either: run `make check`, read `experiments/runner.py`, `services/sut.py`, `core/schema.py`, and the relevant benchmark YAML. Expected outcome: working feature + tests + docs paragraph, all gates still green.
-
-## 11. Critical Context
-
-- The three runtime bugs that shaped the architecture: (1) nested `httpx.ASGITransport` deadlocks → no HTTP in experiment path; (2) synchronous no-fault call chains starve the event-loop timer → `await asyncio.sleep(0)` in `workloads/generator.py:client_loop`, do not remove; (3) warmup wrote downstream but not request rows → collector `recording` gate in `metrics/collector.py`, do not bypass.
-- starlette ≥0.52 `TestClient` never runs `asyncio.create_task` fire-and-forget jobs → API `/run` uses `BackgroundTasks`; `Runtime.submit` is the production path.
-- Never name scratch files after stdlib modules (`inspect.py` shadowing incident).
-- PowerShell here-strings + `Select-Object` truncate/wrap long lines in tool output; verify suspicious output against the actual file before "fixing".
-- Duration-based workloads are wall-clock: never assert exact cross-run equality of counts/timings in tests; assert on seeded RNG behavior or single-run invariants instead.
-- Git identity used: `ResilienceLab <resiliencelab@example.com>`; repo has no remote. Topology work is **uncommitted** — commit it (or verify first) before further changes.
-
-## 12. Agent Instructions
-
-- Repository state: topology changes uncommitted (8 files). Start with `git status --short`, `git diff --stat`, then `make check` (or `ruff check` + `mypy` + `pytest -q`).
-- Commit the topology work first if the gates are green, then implement exactly one of §10 Option B/C (or an explicitly assigned task), with tests and docs, ending green and committed.
-- Do not rewrite the in-process execution model, the exception taxonomy, the timeout contract, the metrics-gating, or the sequential fan-out without understanding §5 and §11.
-- Preserve: `Record` alias usage, `Rng` protocol threading, dual YAML conventions, `max_attempts` = total attempts, amplification definition, `recovery_time=inf` semantics, service-0 salt = `FAULT_RNG_SALT`.
+- Phase 1 changes are **uncommitted**; commit them first (green, message e.g. "Phase 1: workload arrival semantics + latency attribution"), then continue with Phase 2.
+- Do not rewrite the in-process execution model, exception taxonomy, timeout contract, metrics-gating, or the arrival model without understanding §5/§10.
+- Preserve the invariant "same seed + same config ⇒ reproducible stochastic decisions" while "wall-clock completion varies".

@@ -5,6 +5,7 @@ from __future__ import annotations
 from resiliencelab.analysis.statistics import summarize
 from resiliencelab.core.schema import ExperimentSpec
 from resiliencelab.experiments.result import ExperimentResult
+from resiliencelab.metrics.transforms import latency_components
 
 
 def _fmt(value: float, ndigits: int = 4) -> str:
@@ -99,5 +100,25 @@ def build_report(result: ExperimentResult) -> str:
     ]:
         values = [m[metric] for m in metrics_per_run]
         sections.append(_summary_line(metric, values))
-    sections += ["", "## Automatic Analysis", "", automatic_analysis(result), ""]
+    components = latency_components([r for run in result.runs for r in run.records])
+    sections += [
+        "",
+        "## Measurement semantics",
+        "",
+        "Latency is total wall-clock time (seconds) from request issue to response or",
+        "exception. It decomposes into:",
+        f"- **service time**: {_fmt(components['service'])}s mean simulated dependency",
+        "  processing across attempts (fault/saturation delay included).",
+        f"- **backoff wait**: {_fmt(components['retry'])}s mean scheduled retry backoff.",
+        f"- **other (queue/timeout/scheduling)**: {_fmt(components['other'])}s = total −",
+        "  service − backoff.",
+        "",
+        "Throughput is requests per second over the measured (post-warmup) window.",
+        "Amplification is downstream calls per upstream request.",
+        "",
+        "## Automatic Analysis",
+        "",
+        automatic_analysis(result),
+        "",
+    ]
     return "\n".join(sections)
