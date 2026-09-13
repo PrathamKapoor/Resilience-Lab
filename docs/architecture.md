@@ -39,6 +39,14 @@ Resilience policies are scoped to the destination service. A single global
 `core/policies.py` into one independent runtime policy (circuit breaker,
 concurrency limiter, retry) per dependency. See `docs/policies.md`.
 
+## Event model & observability
+
+Every runtime state change produces a canonical, ordered, correlated
+`Event` (`events.py`) — experiment/request/dependency/retry/timeout/breaker/
+capacity/network/fault semantics. Events persist as `raw/events-*.jsonl`;
+`analysis/events.py` provides filtering, summaries, and causal timelines.
+See `docs/events.md`.
+
 Key design decisions:
 
 - In-process execution by default. Services are FastAPI apps for real HTTP

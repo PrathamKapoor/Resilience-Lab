@@ -7,6 +7,7 @@ from typing import Any
 
 from resiliencelab.analysis.recovery import RecoveryReport
 from resiliencelab.core.schema import ExperimentSpec
+from resiliencelab.events import Event
 from resiliencelab.metrics.collector import Record
 from resiliencelab.metrics.transforms import RequestSummary
 
@@ -23,6 +24,7 @@ class RunResult:
     backoff_seconds: float
     records: list[Record] = field(default_factory=list)
     service_metrics: dict[str, dict[str, float]] = field(default_factory=dict)
+    events: list[Event] = field(default_factory=list)
 
     def primary_metrics(self) -> dict[str, float]:
         recovery_time = self.recovery.time_to_recovery
@@ -47,6 +49,7 @@ class ExperimentResult:
     config_hash: str
     runs: list[RunResult]
     environment: dict[str, str] = field(default_factory=dict)
+    events: list[Event] = field(default_factory=list)
 
     @property
     def experiment_id(self) -> str:
@@ -57,6 +60,9 @@ class ExperimentResult:
 
     def service_metrics_per_run(self) -> list[dict[str, dict[str, float]]]:
         return [run.service_metrics for run in self.runs]
+
+    def run_events(self) -> list[Event]:
+        return [event for run in self.runs for event in run.events]
 
     def as_comparison_entry(self) -> dict[str, Any]:
         return {

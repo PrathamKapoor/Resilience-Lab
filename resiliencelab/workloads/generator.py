@@ -11,6 +11,7 @@ from typing import Protocol
 from resiliencelab.core.clock import Clock
 from resiliencelab.core.schema import WorkloadSpec, WorkloadType
 from resiliencelab.core.seeds import generator_for
+from resiliencelab.events import EventType
 from resiliencelab.metrics.collector import MetricsCollector
 from resiliencelab.workloads.arrivals import ArrivalModel
 
@@ -84,6 +85,7 @@ class WorkloadGenerator:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _issue(self, request_id: int) -> None:
+        self.metrics.emit(EventType.REQUEST_STARTED, request_id=request_id, operation="/")
         started = time.perf_counter()
         try:
             response = await self.send(request_id)
@@ -103,3 +105,20 @@ class WorkloadGenerator:
             timeout=timeout,
             latency=latency,
         )
+        if success:
+            self.metrics.emit(
+                EventType.REQUEST_COMPLETED,
+                request_id=request_id,
+                operation="/",
+                status=status,
+                metadata={"latency": latency},
+            )
+        else:
+            self.metrics.emit(
+                EventType.REQUEST_FAILED,
+                request_id=request_id,
+                operation="/",
+                status=status,
+                reason="timeout" if timeout else "failed",
+                metadata={"latency": latency, "timeout": timeout},
+            )

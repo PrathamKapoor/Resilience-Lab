@@ -11,8 +11,10 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from resiliencelab.analysis.events import causal_trace, filter_events
 from resiliencelab.core.config import ConfigValidationError, load_yaml
 from resiliencelab.core.schema import ExperimentSpec
+from resiliencelab.events import event_from_dict
 from resiliencelab.experiments.artifacts import write_artifacts
 from resiliencelab.experiments.benchmarks import normalize_benchmark_name, resolve_benchmark_path
 from resiliencelab.experiments.factorial import generate_matrix
@@ -155,6 +157,49 @@ def report(
     if not report_path.exists():
         _err(f"no report found for `{experiment_id}` (searched {base})")
     console.print(report_path.read_text(encoding="utf-8"))
+
+
+def _load_events(base: Path) -> list[Any]:
+    events: list[Any] = []
+    raw_dir = base / "raw"
+    if not raw_dir.exists():
+        return events
+    for path in sorted(raw_dir.glob("events-*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                events.append(event_from_dict(json.loads(line)))
+    return events
+
+
+@app.command()
+def events(
+    experiment_id: Annotated[str, typer.Argument()],
+    store: Annotated[str | None, typer.Option()] = None,
+    event_type: Annotated[str | None, typer.Option("--type")] = None,
+    service: Annotated[str | None, typer.Option("--service")] = None,
+    request: Annotated[int | None, typer.Option("--request")] = None,
+    trace: Annotated[bool, typer.Option("--trace")] = False,
+    limit: Annotated[int, typer.Option("--limit")] = 100,
+) -> None:
+    base = _store_for(store) / experiment_id
+    all_events = _load_events(base)
+    if not all_events:
+        _err(f"no events found for `{experiment_id}` (searched {base})")
+    filtered = filter_events(
+        all_events,
+        event_type=event_type,
+        service=service,
+        request_id=request,
+    )
+    if trace:
+        console.print(causal_trace(filtered, limit=limit))
+        return
+    for event in filtered[:limit]:
+        console.print(
+            f"[dim]{event.elapsed:8.3f}[/dim] {event.event_type} "
+            f"req={event.request_id} {event.target_service or ''}".rstrip()
+        )
+    console.print(f"[dim]{len(filtered)} event(s)[/dim]")
 
 
 @app.command()

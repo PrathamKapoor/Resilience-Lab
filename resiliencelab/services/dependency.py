@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from resiliencelab.core.clock import Clock
 from resiliencelab.core.schema import CapacitySpec, ProcessingSpec
 from resiliencelab.core.seeds import generator_for
+from resiliencelab.events import EventType
 from resiliencelab.faults.model import FailureKind, FaultEvent, FaultInjector
 from resiliencelab.metrics.collector import MetricsCollector
 from resiliencelab.resilience.errors import CallFailure
@@ -53,6 +54,8 @@ class DependencyService:
             else None
         )
         self._metrics = metrics
+        self._saturated = False
+        self._fault_active = False
         self.app = FastAPI(title=f"ResilienceLab dependency: {name}")
         self._register_routes()
 
@@ -63,6 +66,37 @@ class DependencyService:
         if self._capacity is None:
             return None
         return self._capacity.snapshot()
+
+    def _emit(self, event_type: EventType, request_id: int | None, **metadata: Any) -> None:
+        if self._metrics is not None:
+            self._metrics.emit(
+                event_type, request_id=request_id, target_service=self.name, **metadata
+            )
+
+    def _fault_window_active(self) -> bool:
+        return any(injector.is_active(self.now()) for injector in self.injectors)
+
+    def _update_saturation(self, request_id: int) -> None:
+        cap = self._capacity
+        if cap is None:
+            return
+        saturated = cap.in_flight >= cap.max_concurrency
+        if saturated and not self._saturated:
+            self._saturated = True
+            self._emit(
+                EventType.SERVICE_SATURATED,
+                request_id,
+                in_flight=cap.in_flight,
+                capacity=cap.capacity,
+            )
+        elif not saturated and self._saturated:
+            self._saturated = False
+            self._emit(
+                EventType.SERVICE_RECOVERED,
+                request_id,
+                in_flight=cap.in_flight,
+                capacity=cap.capacity,
+            )
 
     def _evaluate(self, now: float, rng: Generator) -> FaultEvent | None:
         for injector in self.injectors:
@@ -88,11 +122,24 @@ class DependencyService:
                 if attempt_context is not None:
                     attempt_context["service_rejected"] = True
                 self._record_event(request_id, "service_rejected", reason="capacity")
+                self._emit(
+                    EventType.SERVICE_REQUEST_REJECTED,
+                    request_id,
+                    in_flight=self._capacity.in_flight,
+                    capacity=self._capacity.capacity,
+                )
                 raise ServiceSaturated(f"{self.name}: capacity saturated") from None
             if attempt_context is not None:
                 attempt_context["queue_wait"] = queue_wait
             if queue_wait > 0:
                 self._record_event(request_id, "service_queued", queue_wait=queue_wait)
+                self._emit(
+                    EventType.SERVICE_REQUEST_QUEUED,
+                    request_id,
+                    queue_wait=queue_wait,
+                    queue_depth=self._capacity.queue_depth,
+                )
+            self._update_saturation(request_id)
 
         try:
             proc_rng = generator_for(seed, request_id, self.salt, PROCESSING_RNG_SALT)
@@ -103,6 +150,19 @@ class DependencyService:
                 await asyncio.sleep(processing)
 
             event = self._evaluate(self.now(), rng)
+            if event is not None:
+                self._emit(
+                    EventType.FAULT_INJECTED,
+                    request_id,
+                    kind=event.kind.value,
+                    status=event.status_code,
+                    latency=event.latency,
+                )
+            now_active = self._fault_window_active()
+            if self._fault_active and not now_active:
+                self._emit(EventType.FAULT_RECOVERED, request_id)
+            self._fault_active = now_active
+
             if event is None:
                 return
             kind = event.kind
@@ -124,6 +184,7 @@ class DependencyService:
         finally:
             if self._capacity is not None:
                 await self._capacity.release()
+                self._update_saturation(request_id)
 
     def _record_event(self, request_id: int, event: str, **fields: Any) -> None:
         if self._metrics is None:

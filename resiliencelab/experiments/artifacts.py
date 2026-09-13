@@ -9,7 +9,8 @@ from typing import Any
 from resiliencelab.core.config import dump_yaml
 from resiliencelab.core.policies import PolicyResolver, service_names
 from resiliencelab.core.schema import POLICY_SCHEMA_VERSION
-from resiliencelab.experiments.provenance import hash_bytes, hash_records
+from resiliencelab.events import EVENT_SCHEMA_VERSION
+from resiliencelab.experiments.provenance import hash_bytes, hash_records, hash_text
 from resiliencelab.experiments.report import build_report
 from resiliencelab.experiments.result import ExperimentResult
 from resiliencelab.metrics.collector import Record
@@ -61,6 +62,23 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
     raw_hash = hash_records(all_records)
     record("raw/records-hash.txt", f"{raw_hash}\n".encode())
 
+    all_events = []
+    for index, run in enumerate(result.runs):
+        event_lines = "\n".join(
+            json.dumps(e.to_dict(), default=str, sort_keys=True) for e in run.events
+        )
+        record(f"raw/events-{index}.jsonl", event_lines.encode("utf-8"))
+        all_events.extend(run.events)
+    lifecycle_lines = "\n".join(
+        json.dumps(e.to_dict(), default=str, sort_keys=True) for e in result.events
+    )
+    record("raw/events-experiment.jsonl", lifecycle_lines.encode("utf-8"))
+    all_events.extend(result.events)
+    events_hash = hash_text(
+        json.dumps([e.to_dict() for e in all_events], sort_keys=True, default=str)
+    )
+    record("raw/events-hash.txt", f"{events_hash}\n".encode())
+
     statistics = _build_statistics(result)
     _write_json(analysis_dir / "statistics.json", statistics)
     record("analysis/statistics.json", json.dumps(statistics, indent=2).encode("utf-8"))
@@ -73,6 +91,9 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
         "experiment_id": result.experiment.id,
         "config_hash": result.config_hash,
         "raw_records_hash": raw_hash,
+        "events_hash": events_hash,
+        "event_schema_version": EVENT_SCHEMA_VERSION,
+        "event_count": len(all_events),
         "files": manifest_files,
     }
     _write_json(base / "manifest.json", manifest)

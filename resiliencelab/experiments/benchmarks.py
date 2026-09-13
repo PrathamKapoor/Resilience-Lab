@@ -19,6 +19,8 @@ STANDARD_BENCHMARKS = [
     "RL-BENCH-012",
     "RL-BENCH-013",
     "RL-BENCH-014",
+    "RL-BENCH-015",
+    "RL-BENCH-016",
 ]
 
 

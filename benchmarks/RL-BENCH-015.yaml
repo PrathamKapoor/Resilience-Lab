@@ -1,0 +1,42 @@
+experiment:
+  id: RL-BENCH-015
+  name: retry-causal-trace
+  version: 1
+  description: Failure to retry scheduling to retry execution to dependency outcome, reconstructable from the event stream.
+
+system:
+  services:
+    - name: payment_service
+
+workload:
+  type: closed_loop
+  clients: 10
+  arrival_rate: 200
+  duration: 20s
+  warmup: 2s
+
+failure:
+  - target: payment_service
+    type: http_503
+    mode: burst
+    probability: 0.6
+    duration: 8s
+
+policy:
+  retry:
+    enabled: true
+    max_attempts: 3
+  backoff:
+    type: exponential
+    base: 100ms
+    maximum: 2s
+    jitter: full
+  circuit_breaker:
+    enabled: true
+    threshold: 5
+    recovery_window: 5s
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1015

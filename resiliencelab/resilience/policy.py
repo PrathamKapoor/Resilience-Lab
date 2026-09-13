@@ -98,6 +98,7 @@ class PolicyExecutor(Generic[T]):
             while True:
                 if deadline is not None and time.perf_counter() >= deadline:
                     self.timeouts += 1
+                    self._emit("timeout", reason="deadline")
                     raise DeadlineExceeded()
                 self.calls += 1
                 attempt_started = time.perf_counter()
@@ -134,6 +135,7 @@ class PolicyExecutor(Generic[T]):
                             remaining = deadline - time.perf_counter()
                             if remaining <= 0:
                                 self.timeouts += 1
+                                self._emit("timeout", reason="deadline")
                                 raise DeadlineExceeded() from None
                             delay = min(delay, remaining)
                         self.backoff_seconds += delay
@@ -175,4 +177,5 @@ class PolicyExecutor(Generic[T]):
             async with asyncio.timeout(read):
                 return await operation()
         except TimeoutError as exc:
+            self._emit("timeout", reason="read_timeout")
             raise CallFailure("dependent call timed out", retryable=True, cause=exc) from exc
