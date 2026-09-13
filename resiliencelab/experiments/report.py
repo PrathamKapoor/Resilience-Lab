@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from resiliencelab.analysis.events import causal_trace, event_summary
 from resiliencelab.analysis.statistics import summarize
 from resiliencelab.core.policies import PolicyResolver, service_names
 from resiliencelab.core.schema import ExperimentSpec, PolicySpec
+from resiliencelab.events import EventType
 from resiliencelab.experiments.result import ExperimentResult
 from resiliencelab.metrics.transforms import latency_components
 
@@ -110,6 +112,61 @@ def _service_policies_section(result: ExperimentResult) -> str:
     return "\n".join(lines)
 
 
+def _observability_section(result: ExperimentResult) -> str:
+    events = result.run_events()
+    counts = event_summary(events)
+    if not events:
+        return "\n".join(["## Observability summary", "", "No events recorded."])
+
+    tracked = {
+        "requests": [
+            EventType.REQUEST_STARTED,
+            EventType.REQUEST_COMPLETED,
+            EventType.REQUEST_FAILED,
+        ],
+        "dependencies": [
+            EventType.DEPENDENCY_CALLED,
+            EventType.DEPENDENCY_COMPLETED,
+            EventType.DEPENDENCY_FAILED,
+        ],
+        "retries": [EventType.RETRY_SCHEDULED, EventType.RETRY_EXECUTED],
+        "timeouts": [EventType.TIMEOUT_TRIGGERED],
+        "breaker": [
+            EventType.CIRCUIT_OPENED,
+            EventType.CIRCUIT_HALF_OPENED,
+            EventType.CIRCUIT_CLOSED,
+        ],
+        "capacity": [
+            EventType.SERVICE_REQUEST_QUEUED,
+            EventType.SERVICE_REQUEST_REJECTED,
+            EventType.SERVICE_SATURATED,
+            EventType.SERVICE_RECOVERED,
+        ],
+        "faults": [EventType.FAULT_INJECTED, EventType.FAULT_RECOVERED],
+    }
+    lines = ["## Observability summary", "", f"Events: {len(events)}", ""]
+    for label, types in tracked.items():
+        total = sum(counts.get(t.value, 0) for t in types)
+        if total == 0:
+            continue
+        parts = [
+            f"{t.value.replace('Circuit', '').replace('ServiceRequest', '')}: {counts.get(t.value, 0)}"
+            for t in types
+        ]
+        lines.append(f"{label}: " + ", ".join(parts))
+
+    if result.runs:
+        lines += [
+            "",
+            "## Causal timeline (sample)",
+            "",
+            "```",
+            causal_trace(result.runs[0].events, limit=25),
+            "```",
+        ]
+    return "\n".join(lines)
+
+
 def build_report(result: ExperimentResult) -> str:
     spec = result.experiment
     sections = [
@@ -166,6 +223,8 @@ def build_report(result: ExperimentResult) -> str:
         "Amplification is downstream calls per upstream request.",
         "",
         _service_capacity_section(result),
+        "",
+        _observability_section(result),
         "## Automatic Analysis",
         "",
         automatic_analysis(result),

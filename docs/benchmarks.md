@@ -16,6 +16,8 @@
 | RL-BENCH-012 | retry-amplification-under-saturation | Retry pressure against a saturated dependency |
 | RL-BENCH-013 | per-service-retry-isolation | Independent retry policies per service under comparable failures |
 | RL-BENCH-014 | per-service-breaker-isolation | Independent circuit breaker and retry state per dependency |
+| RL-BENCH-015 | retry-causal-trace | Failure → retry → outcome reconstructable from events |
+| RL-BENCH-016 | saturation-recovery-trace | Queueing/saturation/rejection/recovery observable as events |
 
 Run one with:
 

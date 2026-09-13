@@ -12,6 +12,7 @@ from resiliencelab.core.clock import Clock
 from resiliencelab.core.policies import PolicyResolver
 from resiliencelab.core.schema import ExperimentSpec, SeedStrategy, ServiceSpec
 from resiliencelab.core.seeds import generator, generator_for
+from resiliencelab.events import EventEmitter, EventType
 from resiliencelab.experiments.provenance import capture_environment, hash_config
 from resiliencelab.experiments.result import ExperimentResult, RunResult
 from resiliencelab.faults.model import FaultInjector
@@ -32,6 +33,12 @@ _CIRCUIT_EVENTS = {
     CircuitState.HALF_OPEN: "circuit_half_open",
 }
 
+_CIRCUIT_EVENT_TYPES = {
+    CircuitState.CLOSED: EventType.CIRCUIT_CLOSED,
+    CircuitState.OPEN: EventType.CIRCUIT_OPENED,
+    CircuitState.HALF_OPEN: EventType.CIRCUIT_HALF_OPENED,
+}
+
 
 class ExperimentRunner:
     def __init__(self) -> None:
@@ -43,15 +50,30 @@ class ExperimentRunner:
     async def run_async(self, spec: ExperimentSpec) -> ExperimentResult:
         seeds = self._seeds(spec)
         policy_name = build_policy(spec.policy).name
+        lifecycle = EventEmitter(spec.id, "experiment", clock=Clock().now)
+        lifecycle.emit(
+            EventType.EXPERIMENT_STARTED,
+            metadata={
+                "benchmark": spec.id,
+                "repetitions": len(seeds),
+                "policy": policy_name,
+            },
+        )
         runs: list[RunResult] = []
-        for index, seed in enumerate(seeds):
-            runs.append(await self._run_once(spec, seed, index))
+        try:
+            for index, seed in enumerate(seeds):
+                runs.append(await self._run_once(spec, seed, index))
+        except Exception as exc:  # noqa: BLE001
+            lifecycle.emit(EventType.EXPERIMENT_FAILED, reason=str(exc))
+            raise
+        lifecycle.emit(EventType.EXPERIMENT_COMPLETED, metadata={"runs": len(runs)})
         return ExperimentResult(
             experiment=spec,
             policy_name=policy_name,
             config_hash=hash_config(spec),
             runs=runs,
             environment=capture_environment(),
+            events=lifecycle.events(),
         )
 
     def _seeds(self, spec: ExperimentSpec) -> list[int]:
@@ -111,6 +133,12 @@ class ExperimentRunner:
                         from_state=old.value,
                         to_state=new.value,
                     )
+                    metrics.emit(
+                        _CIRCUIT_EVENT_TYPES[new],
+                        target_service=service,
+                        reason="threshold" if new is CircuitState.OPEN else None,
+                        metadata={"from_state": old.value, "to_state": new.value},
+                    )
 
                 policy.circuit_breaker.on_transition(on_transition)
 
@@ -136,7 +164,10 @@ class ExperimentRunner:
             result: object = None
             for name in names:
                 dependency = dependencies[name]
-                attempt_context: dict[str, Any] = {}
+                attempt_context: dict[str, Any] = {
+                    "source_service": "order_api",
+                    "target_service": name,
+                }
                 index = indices[name]
                 link = network_links[name]
 
@@ -145,12 +176,26 @@ class ExperimentRunner:
                     ctx: dict[str, Any] = attempt_context,
                     idx: int = index,
                     nw: Any = link,
+                    target: str = name,
                 ) -> None:
                     rng_nw = generator_for(seed, request_id, NETWORK_RNG_SALT, idx)
                     delay = network_delay(nw, rng_nw)
                     ctx["network_latency"] = delay
                     if delay > 0:
                         await asyncio.sleep(delay)
+                    if nw is not None:
+                        metrics.emit(
+                            EventType.NETWORK_DELAY_APPLIED,
+                            request_id=request_id,
+                            attempt=ctx.get("attempt"),
+                            source_service="order_api",
+                            target_service=target,
+                            metadata={
+                                "base": nw.latency,
+                                "jitter": nw.jitter,
+                                "delay": delay,
+                            },
+                        )
                     await dep.invoke(seed, request_id, attempt_context=ctx)
 
                 result = await clients[name].execute(
@@ -206,4 +251,5 @@ class ExperimentRunner:
             backoff_seconds=backoff_seconds,
             records=records,
             service_metrics=service_metrics,
+            events=metrics.events(),
         )

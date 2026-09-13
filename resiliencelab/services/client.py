@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from resiliencelab.events import EventType
 from resiliencelab.metrics.collector import MetricsCollector
 from resiliencelab.resilience.errors import CallFailure
 from resiliencelab.resilience.jitter import Rng
@@ -37,12 +38,18 @@ class ResilientClient:
         attempt_context: dict[str, Any] | None = None,
     ) -> object:
         last_status: dict[str, int | None] = {"status": None}
+        attempt_counter: dict[str, int] = {"n": 0}
 
-        def on_event(event: str, **fields: object) -> None:
+        def _context() -> dict[str, Any]:
+            return attempt_context or {}
+
+        def on_event(event: str, **fields: Any) -> None:
             if self.metrics is None:
                 return
+            context = _context()
+            source = context.get("source_service")
+            target = dependency
             if event == "attempt":
-                context = attempt_context or {}
                 self.metrics.record(
                     MetricsCollector.DOWNSTREAM,
                     request_id=request_id,
@@ -60,6 +67,72 @@ class ResilientClient:
                     queue_wait=context.get("queue_wait"),
                     service_rejected=context.get("service_rejected", False),
                 )
+                attempt = fields.get("attempt")
+                if fields.get("success"):
+                    self.metrics.emit(
+                        EventType.DEPENDENCY_COMPLETED,
+                        request_id=request_id,
+                        attempt=attempt,
+                        source_service=source,
+                        target_service=target,
+                        status=fields.get("status"),
+                        metadata={"duration": fields.get("duration")},
+                    )
+                else:
+                    if fields.get("timeout"):
+                        self.metrics.emit(
+                            EventType.TIMEOUT_TRIGGERED,
+                            request_id=request_id,
+                            attempt=attempt,
+                            source_service=source,
+                            target_service=target,
+                            reason="deadline",
+                        )
+                    self.metrics.emit(
+                        EventType.DEPENDENCY_FAILED,
+                        request_id=request_id,
+                        attempt=attempt,
+                        source_service=source,
+                        target_service=target,
+                        status=fields.get("status"),
+                        reason="timeout" if fields.get("timeout") else "failed",
+                        metadata={"duration": fields.get("duration")},
+                    )
+            elif event == "retry":
+                self.metrics.emit(
+                    EventType.RETRY_SCHEDULED,
+                    request_id=request_id,
+                    attempt=fields.get("attempt"),
+                    source_service=source,
+                    target_service=target,
+                    status=fields.get("status"),
+                    metadata={"delay": fields.get("delay")},
+                )
+                self.metrics.record(
+                    MetricsCollector.EVENT,
+                    request_id=request_id,
+                    dependency=dependency,
+                    policy=self.policy.name,
+                    event=event,
+                    **{k: v for k, v in fields.items() if k != "event"},
+                )
+            elif event == "timeout":
+                self.metrics.emit(
+                    EventType.TIMEOUT_TRIGGERED,
+                    request_id=request_id,
+                    attempt=None,
+                    source_service=source,
+                    target_service=target,
+                    reason=fields.get("reason"),
+                )
+                self.metrics.record(
+                    MetricsCollector.EVENT,
+                    request_id=request_id,
+                    dependency=dependency,
+                    policy=self.policy.name,
+                    event=event,
+                    **{k: v for k, v in fields.items() if k != "event"},
+                )
             else:
                 self.metrics.record(
                     MetricsCollector.EVENT,
@@ -73,6 +146,27 @@ class ResilientClient:
         executor: PolicyExecutor[object] = PolicyExecutor(self.policy, rng, on_event=on_event)
 
         async def wrapped() -> object:
+            attempt_counter["n"] += 1
+            attempt = attempt_counter["n"]
+            context = _context()
+            context["attempt"] = attempt
+            if self.metrics is not None:
+                if attempt == 1:
+                    self.metrics.emit(
+                        EventType.DEPENDENCY_CALLED,
+                        request_id=request_id,
+                        attempt=attempt,
+                        source_service=context.get("source_service"),
+                        target_service=dependency,
+                    )
+                else:
+                    self.metrics.emit(
+                        EventType.RETRY_EXECUTED,
+                        request_id=request_id,
+                        attempt=attempt,
+                        source_service=context.get("source_service"),
+                        target_service=dependency,
+                    )
             try:
                 return await operation()
             except OSError as exc:

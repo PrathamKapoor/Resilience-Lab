@@ -121,6 +121,28 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
         result = _result_or_404(runtime, experiment_id)
         return {"timeline": [run.timeline for run in result.runs]}
 
+    @v1.get("/experiments/{experiment_id}/events")
+    async def experiment_events(
+        experiment_id: str,
+        event_type: str | None = None,
+        service: str | None = None,
+        request_id: int | None = None,
+    ) -> dict[str, Any]:
+        from resiliencelab.analysis.events import filter_events
+
+        result = _result_or_404(runtime, experiment_id)
+        events = filter_events(
+            result.run_events(),
+            event_type=event_type,
+            service=service,
+            request_id=request_id,
+        )
+        return {
+            "event_schema_version": "1",
+            "count": len(events),
+            "events": [event.to_dict() for event in events],
+        }
+
     @v1.get("/experiments/{experiment_id}/report", response_class=PlainTextResponse)
     async def experiment_report(experiment_id: str) -> str:
         result = _result_or_404(runtime, experiment_id)

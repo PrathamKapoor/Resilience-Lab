@@ -1,0 +1,38 @@
+experiment:
+  id: RL-BENCH-016
+  name: saturation-recovery-trace
+  version: 1
+  description: Queueing, saturation, rejection, resilience behavior, and recovery observable as structured events.
+
+system:
+  services:
+    - name: payment_service
+      processing:
+        distribution: constant
+        mean: 10ms
+      capacity:
+        max_concurrency: 5
+        queue_limit: 5
+
+workload:
+  type: closed_loop
+  clients: 30
+  arrival_rate: 200
+  duration: 20s
+  warmup: 2s
+
+failure: []
+
+policy:
+  retry:
+    enabled: true
+    max_attempts: 2
+  backoff:
+    type: fixed
+    base: 50ms
+    maximum: 50ms
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1016
