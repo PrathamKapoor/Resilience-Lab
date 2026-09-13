@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from typing import Any
 
 from resiliencelab.analysis.recovery import detect_recovery
 from resiliencelab.core.builders import build_fault_spec, build_policy
 from resiliencelab.core.clock import Clock
-from resiliencelab.core.schema import ExperimentSpec, SeedStrategy
-from resiliencelab.core.seeds import generator
+from resiliencelab.core.schema import ExperimentSpec, SeedStrategy, ServiceSpec
+from resiliencelab.core.seeds import generator, generator_for
 from resiliencelab.experiments.provenance import capture_environment, hash_config
 from resiliencelab.experiments.result import ExperimentResult, RunResult
 from resiliencelab.faults.model import FaultInjector
@@ -20,6 +21,7 @@ from resiliencelab.resilience.circuit_breaker import CircuitState
 from resiliencelab.resilience.jitter import Rng
 from resiliencelab.services.client import ResilientClient
 from resiliencelab.services.dependency import FAULT_RNG_SALT, DependencyService
+from resiliencelab.services.network import NETWORK_RNG_SALT, network_delay, resolve_network_link
 from resiliencelab.services.sut import ServiceResponse, SystemUnderTest
 from resiliencelab.workloads.generator import WorkloadGenerator
 
@@ -64,6 +66,12 @@ class ExperimentRunner:
             return list(spec.system.call_order())
         return ["payment_service"]
 
+    def _service_spec(self, spec: ExperimentSpec, name: str) -> ServiceSpec | None:
+        for service in spec.system.services:
+            if service.name == name:
+                return service
+        return None
+
     def _injectors_by_service(
         self, spec: ExperimentSpec, warmup: float
     ) -> dict[str, list[FaultInjector]]:
@@ -95,31 +103,51 @@ class ExperimentRunner:
         warmup = spec.workload.warmup
         routed = self._injectors_by_service(spec, warmup)
         names = self._service_names(spec)
-        dependencies = {
-            name: DependencyService(
+        indices = {name: index for index, name in enumerate(names)}
+        dependencies: dict[str, DependencyService] = {}
+        network_links: dict[str, Any] = {}
+        for name in names:
+            service_spec = self._service_spec(spec, name)
+            dependencies[name] = DependencyService(
                 name,
                 routed.get(name, []),
                 seed=seed,
                 clock=clock,
-                salt=FAULT_RNG_SALT + index,
+                salt=FAULT_RNG_SALT + indices[name],
+                processing=service_spec.processing if service_spec else None,
+                capacity=service_spec.capacity if service_spec else None,
+                metrics=metrics,
             )
-            for index, name in enumerate(names)
-        }
+            network_links[name] = resolve_network_link(spec.system.network, "order_api", name)
         dep_client = ResilientClient(policy, metrics)
 
         async def downstream(request_id: int, rng: Rng) -> object:
             result: object = None
             for name in names:
                 dependency = dependencies[name]
+                attempt_context: dict[str, Any] = {}
+                index = indices[name]
+                link = network_links[name]
 
-                async def operation(dep: DependencyService = dependency) -> None:
-                    await dep.invoke(seed, request_id)
+                async def operation(
+                    dep: DependencyService = dependency,
+                    ctx: dict[str, Any] = attempt_context,
+                    idx: int = index,
+                    nw: Any = link,
+                ) -> None:
+                    rng_nw = generator_for(seed, request_id, NETWORK_RNG_SALT, idx)
+                    delay = network_delay(nw, rng_nw)
+                    ctx["network_latency"] = delay
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+                    await dep.invoke(seed, request_id, attempt_context=ctx)
 
                 result = await dep_client.execute(
                     operation,
                     rng=rng,
                     request_id=request_id,
                     dependency=name,
+                    attempt_context=attempt_context,
                 )
             return result
 
@@ -151,6 +179,11 @@ class ExperimentRunner:
             and e.get("event") == "retry"
             and e.get("delay")
         )
+        service_metrics = {
+            name: snapshot
+            for name in names
+            if (snapshot := dependencies[name].capacity_snapshot()) is not None
+        }
         return RunResult(
             run_id=run_id,
             seed=seed,
@@ -161,4 +194,5 @@ class ExperimentRunner:
             record_count=len(records),
             backoff_seconds=backoff_seconds,
             records=records,
+            service_metrics=service_metrics,
         )

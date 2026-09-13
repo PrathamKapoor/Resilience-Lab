@@ -110,15 +110,41 @@ def build_report(result: ExperimentResult) -> str:
         f"- **service time**: {_fmt(components['service'])}s mean simulated dependency",
         "  processing across attempts (fault/saturation delay included).",
         f"- **backoff wait**: {_fmt(components['retry'])}s mean scheduled retry backoff.",
-        f"- **other (queue/timeout/scheduling)**: {_fmt(components['other'])}s = total −",
-        "  service − backoff.",
+        f"- **other (queue/timeout/scheduling)**: {_fmt(components['other'])}s = total - "
+        "service - backoff.",
+        "",
+        "Simulated sub-components of service time (see docs/simulation.md):",
+        f"- **network latency**: {_fmt(components['network'])}s mean simulated per-call delay.",
+        f"- **processing latency**: {_fmt(components['processing'])}s mean simulated service processing.",
+        f"- **queue wait**: {_fmt(components['queue'])}s mean wall-clock queue wait.",
         "",
         "Throughput is requests per second over the measured (post-warmup) window.",
         "Amplification is downstream calls per upstream request.",
         "",
+        _service_capacity_section(result),
         "## Automatic Analysis",
         "",
         automatic_analysis(result),
         "",
     ]
     return "\n".join(sections)
+
+
+def _service_capacity_section(result: ExperimentResult) -> str:
+    lines: list[str] = ["## Simulated service capacity"]
+    runs = result.service_metrics_per_run()
+    names = sorted({name for run in runs for name in run})
+    if not names:
+        return "\n".join(lines + ["No per-service capacity configured."])
+    for name in names:
+        snapshots = [run[name] for run in runs if name in run]
+        if not snapshots:
+            continue
+        capacity = snapshots[0].get("capacity", 0.0)
+        peak_queue = max(s.get("peak_queue_depth", 0.0) for s in snapshots)
+        rejected = sum(s.get("rejected_count", 0.0) for s in snapshots)
+        lines.append(
+            f"- **{name}**: capacity={capacity:.0f}, peak queue depth={peak_queue:.0f}, "
+            f"service-side rejections={rejected:.0f} (over {len(snapshots)} run(s))"
+        )
+    return "\n".join(lines)

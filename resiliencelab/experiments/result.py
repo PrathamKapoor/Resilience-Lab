@@ -22,6 +22,7 @@ class RunResult:
     record_count: int
     backoff_seconds: float
     records: list[Record] = field(default_factory=list)
+    service_metrics: dict[str, dict[str, float]] = field(default_factory=dict)
 
     def primary_metrics(self) -> dict[str, float]:
         recovery_time = self.recovery.time_to_recovery
@@ -53,6 +54,9 @@ class ExperimentResult:
 
     def metrics_per_run(self) -> list[dict[str, float]]:
         return [run.primary_metrics() for run in self.runs]
+
+    def service_metrics_per_run(self) -> list[dict[str, dict[str, float]]]:
+        return [run.service_metrics for run in self.runs]
 
     def as_comparison_entry(self) -> dict[str, Any]:
         return {

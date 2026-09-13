@@ -46,6 +46,7 @@ class TemporalMode(str, Enum):
 
 
 class LatencyDistribution(str, Enum):
+    CONSTANT = "constant"
     UNIFORM = "uniform"
     NORMAL = "normal"
     LOGNORMAL = "lognormal"
@@ -117,6 +118,8 @@ class FaultInjector:
 
     def sample_latency(self, rng: Generator) -> float:
         spec = self.spec
+        if spec.latency_distribution is LatencyDistribution.CONSTANT:
+            return spec.latency_mean
         if spec.latency_distribution is LatencyDistribution.UNIFORM:
             return rng.uniform(spec.latency_min, spec.latency_max)
         if spec.latency_distribution is LatencyDistribution.NORMAL:

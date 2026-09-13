@@ -1,0 +1,31 @@
+experiment:
+  id: RL-BENCH-010
+  name: network-latency-and-jitter
+  version: 1
+  description: Stable service with simulated network delay and jitter.
+
+system:
+  services:
+    - name: payment_service
+  network:
+    default:
+      latency: 30ms
+      jitter: 8ms
+
+workload:
+  type: closed_loop
+  clients: 25
+  arrival_rate: 200
+  duration: 20s
+  warmup: 2s
+
+failure: []
+
+policy:
+  timeout:
+    total: 200ms
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1010

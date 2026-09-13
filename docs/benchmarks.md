@@ -10,6 +10,10 @@
 | RL-BENCH-006 | cascading-failure | Staged multi-target failure propagation |
 | RL-BENCH-007 | recovery-dynamics | Time to degradation/stabilization/recovery |
 | RL-BENCH-008 | non-stationary-failure | Policy robustness when failure type changes mid-run |
+| RL-BENCH-009 | service-processing-latency | Simulated service processing latency vs stable client |
+| RL-BENCH-010 | network-latency-and-jitter | Simulated network delay and jitter under timeouts |
+| RL-BENCH-011 | capacity-saturation | Fixed service capacity saturated by arrival load |
+| RL-BENCH-012 | retry-amplification-under-saturation | Retry pressure against a saturated dependency |
 
 Run one with:
 

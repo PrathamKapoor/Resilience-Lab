@@ -44,6 +44,7 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
             for s in result.experiment.system.services
         ],
         "metrics_per_run": result.metrics_per_run(),
+        "service_metrics_per_run": result.service_metrics_per_run(),
     }
     record("experiment.json", json.dumps(summary, indent=2).encode("utf-8"))
 
