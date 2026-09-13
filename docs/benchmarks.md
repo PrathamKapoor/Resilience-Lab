@@ -14,6 +14,8 @@
 | RL-BENCH-010 | network-latency-and-jitter | Simulated network delay and jitter under timeouts |
 | RL-BENCH-011 | capacity-saturation | Fixed service capacity saturated by arrival load |
 | RL-BENCH-012 | retry-amplification-under-saturation | Retry pressure against a saturated dependency |
+| RL-BENCH-013 | per-service-retry-isolation | Independent retry policies per service under comparable failures |
+| RL-BENCH-014 | per-service-breaker-isolation | Independent circuit breaker and retry state per dependency |
 
 Run one with:
 

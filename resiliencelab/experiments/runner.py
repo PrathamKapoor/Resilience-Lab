@@ -9,6 +9,7 @@ from typing import Any
 from resiliencelab.analysis.recovery import detect_recovery
 from resiliencelab.core.builders import build_fault_spec, build_policy
 from resiliencelab.core.clock import Clock
+from resiliencelab.core.policies import PolicyResolver
 from resiliencelab.core.schema import ExperimentSpec, SeedStrategy, ServiceSpec
 from resiliencelab.core.seeds import generator, generator_for
 from resiliencelab.experiments.provenance import capture_environment, hash_config
@@ -88,24 +89,34 @@ class ExperimentRunner:
         run_id = f"{spec.id}/run-{index}"
         clock = Clock()
         metrics = MetricsCollector(spec.id, run_id, seed, clock=clock.now)
-        policy = build_policy(spec.policy)
-
-        if policy.circuit_breaker is not None:
-            policy.circuit_breaker.on_transition(
-                lambda old, new: metrics.record(
-                    MetricsCollector.EVENT,
-                    event=_CIRCUIT_EVENTS[new],
-                    from_state=old.value,
-                    to_state=new.value,
-                )
-            )
-
         warmup = spec.workload.warmup
         routed = self._injectors_by_service(spec, warmup)
         names = self._service_names(spec)
         indices = {name: index for index, name in enumerate(names)}
+
+        policies = {
+            name: build_policy(PolicyResolver(spec.policy, spec.policies).resolve(name))
+            for name in names
+        }
+        for name, policy in policies.items():
+            if policy.circuit_breaker is not None:
+
+                def on_transition(
+                    old: CircuitState, new: CircuitState, service: str = name
+                ) -> None:
+                    metrics.record(
+                        MetricsCollector.EVENT,
+                        dependency=service,
+                        event=_CIRCUIT_EVENTS[new],
+                        from_state=old.value,
+                        to_state=new.value,
+                    )
+
+                policy.circuit_breaker.on_transition(on_transition)
+
         dependencies: dict[str, DependencyService] = {}
         network_links: dict[str, Any] = {}
+        clients: dict[str, ResilientClient] = {}
         for name in names:
             service_spec = self._service_spec(spec, name)
             dependencies[name] = DependencyService(
@@ -119,7 +130,7 @@ class ExperimentRunner:
                 metrics=metrics,
             )
             network_links[name] = resolve_network_link(spec.system.network, "order_api", name)
-        dep_client = ResilientClient(policy, metrics)
+            clients[name] = ResilientClient(policies[name], metrics)
 
         async def downstream(request_id: int, rng: Rng) -> object:
             result: object = None
@@ -142,7 +153,7 @@ class ExperimentRunner:
                         await asyncio.sleep(delay)
                     await dep.invoke(seed, request_id, attempt_context=ctx)
 
-                result = await dep_client.execute(
+                result = await clients[name].execute(
                     operation,
                     rng=rng,
                     request_id=request_id,

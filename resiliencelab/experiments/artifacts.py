@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from resiliencelab.core.config import dump_yaml
+from resiliencelab.core.policies import PolicyResolver, service_names
+from resiliencelab.core.schema import POLICY_SCHEMA_VERSION
 from resiliencelab.experiments.provenance import hash_bytes, hash_records
 from resiliencelab.experiments.report import build_report
 from resiliencelab.experiments.result import ExperimentResult
@@ -43,6 +45,7 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
             {"name": s.name, "depends_on": list(s.depends_on)}
             for s in result.experiment.system.services
         ],
+        "policies": _policy_provenance(result),
         "metrics_per_run": result.metrics_per_run(),
         "service_metrics_per_run": result.service_metrics_per_run(),
     }
@@ -74,6 +77,19 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
     }
     _write_json(base / "manifest.json", manifest)
     return manifest
+
+
+def _policy_provenance(result: ExperimentResult) -> dict[str, Any]:
+    spec = result.experiment
+    resolver = PolicyResolver(spec.policy, spec.policies)
+    return {
+        "schema_version": POLICY_SCHEMA_VERSION,
+        "default": spec.policy.model_dump(mode="json"),
+        "overrides": spec.policies,
+        "resolved": {
+            name: resolver.resolve(name).model_dump(mode="json") for name in service_names(spec)
+        },
+    }
 
 
 def _build_statistics(result: ExperimentResult) -> dict[str, Any]:
