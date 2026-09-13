@@ -32,6 +32,13 @@ delay, an explicit service-side capacity/queue, a seeded processing delay, and
 fault injection. See `docs/simulation.md` for full semantics and the
 explicit simulation/wall-clock distinction.
 
+## Policy resolution
+
+Resilience policies are scoped to the destination service. A single global
+`policy` plus optional per-service `policies` overrides are resolved by
+`core/policies.py` into one independent runtime policy (circuit breaker,
+concurrency limiter, retry) per dependency. See `docs/policies.md`.
+
 Key design decisions:
 
 - In-process execution by default. Services are FastAPI apps for real HTTP

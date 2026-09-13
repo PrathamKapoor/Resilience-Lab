@@ -47,6 +47,7 @@ class ResilientClient:
                     MetricsCollector.DOWNSTREAM,
                     request_id=request_id,
                     dependency=dependency,
+                    policy=self.policy.name,
                     attempt=fields.get("attempt"),
                     success=fields.get("success"),
                     timeout=fields.get("timeout"),
@@ -64,6 +65,7 @@ class ResilientClient:
                     MetricsCollector.EVENT,
                     request_id=request_id,
                     dependency=dependency,
+                    policy=self.policy.name,
                     event=event,
                     **{k: v for k, v in fields.items() if k != "event"},
                 )

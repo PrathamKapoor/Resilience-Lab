@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -10,6 +11,24 @@ from resiliencelab.core.types import Duration
 from resiliencelab.faults.model import FailureKind, LatencyDistribution, TemporalMode
 from resiliencelab.resilience.backoff import BackoffKind
 from resiliencelab.resilience.jitter import JitterKind
+
+POLICY_SCHEMA_VERSION = "1"
+
+
+def merge_policy_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge a per-service policy override onto a base policy.
+
+    Dict values merge recursively; every other value (including ``None`` and
+    scalars) replaces the base value. Absent keys in ``override`` inherit from
+    ``base`` untouched.
+    """
+    result: dict[str, Any] = dict(base)
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = merge_policy_dicts(result[key], value)
+        else:
+            result[key] = value
+    return result
 
 
 class WorkloadType(str, Enum):
@@ -295,6 +314,7 @@ class ExperimentSpec(BaseModel):
     workload: WorkloadSpec = Field(default_factory=WorkloadSpec)
     failure: list[FailureSpec] = Field(default_factory=list)
     policy: PolicySpec = Field(default_factory=PolicySpec)
+    policies: dict[str, dict[str, Any]] = Field(default_factory=dict)
     repetitions: RepetitionsSpec = Field(default_factory=RepetitionsSpec)
     environment: EnvironmentSpec = Field(default_factory=EnvironmentSpec)
     analysis: AnalysisSpec = Field(default_factory=AnalysisSpec)
@@ -308,4 +328,11 @@ class ExperimentSpec(BaseModel):
             for failure in self.failure:
                 if failure.target not in known:
                     raise ValueError(f"failure target {failure.target!r} is not a declared service")
+            for name in self.policies:
+                if name not in known:
+                    raise ValueError(f"policy override for unknown service {name!r}")
+        for name, override in self.policies.items():
+            if not isinstance(override, dict):
+                raise ValueError(f"policy override for {name!r} must be a mapping")
+            PolicySpec.model_validate(merge_policy_dicts(self.policy.model_dump(), override))
         return self

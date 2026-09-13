@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from resiliencelab.analysis.statistics import summarize
-from resiliencelab.core.schema import ExperimentSpec
+from resiliencelab.core.policies import PolicyResolver, service_names
+from resiliencelab.core.schema import ExperimentSpec, PolicySpec
 from resiliencelab.experiments.result import ExperimentResult
 from resiliencelab.metrics.transforms import latency_components
 
@@ -67,6 +68,48 @@ def _topology_line(spec: ExperimentSpec) -> str:
     return f"services: {described}"
 
 
+def _describe_policy(spec: PolicySpec) -> str:
+    parts: list[str] = []
+    if spec.retry is not None:
+        parts.append(f"retry(max_attempts={spec.retry.max_attempts})")
+    else:
+        parts.append("retry=disabled")
+    if spec.retry is not None:
+        backoff = spec.backoff
+        parts.append(
+            f"backoff({backoff.type.value}, base={backoff.base}s, jitter={backoff.jitter.value})"
+        )
+    if spec.circuit_breaker is not None:
+        cb = spec.circuit_breaker
+        parts.append(f"circuit_breaker(threshold={cb.threshold}, recovery={cb.recovery_window}s)")
+    else:
+        parts.append("circuit_breaker=disabled")
+    if spec.timeout is not None and (
+        spec.timeout.connect is not None
+        or spec.timeout.read is not None
+        or spec.timeout.total is not None
+    ):
+        parts.append(f"timeout(total={spec.timeout.total}s)")
+    if spec.concurrency is not None:
+        concurrency = spec.concurrency
+        parts.append(
+            f"concurrency(limit={concurrency.limit}, queue_limit={concurrency.queue_limit})"
+        )
+    return ", ".join(parts) if parts else "baseline"
+
+
+def _service_policies_section(result: ExperimentResult) -> str:
+    spec = result.experiment
+    resolver = PolicyResolver(spec.policy, spec.policies)
+    lines = ["## Service policies", ""]
+    for name in service_names(spec):
+        lines.append(f"- **{name}**: {_describe_policy(resolver.resolve(name))}")
+    if spec.policies:
+        lines.append("")
+        lines.append("Per-service overrides present for: " + ", ".join(sorted(spec.policies)))
+    return "\n".join(lines)
+
+
 def build_report(result: ExperimentResult) -> str:
     spec = result.experiment
     sections = [
@@ -85,6 +128,7 @@ def build_report(result: ExperimentResult) -> str:
         f"workload: {spec.workload.type.value}, {spec.workload.clients} clients",
         "```",
         "",
+        _service_policies_section(result),
         "## Results",
     ]
     metrics_per_run = result.metrics_per_run()

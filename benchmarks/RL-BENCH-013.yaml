@@ -1,0 +1,46 @@
+experiment:
+  id: RL-BENCH-013
+  name: per-service-retry-isolation
+  version: 1
+  description: Two dependencies with different retry policies under comparable intermittent failures.
+
+system:
+  services:
+    - name: payment_service
+    - name: inventory_service
+
+workload:
+  type: closed_loop
+  clients: 20
+  arrival_rate: 200
+  duration: 20s
+  warmup: 2s
+
+failure:
+  - target: payment_service
+    type: http_503
+    mode: random
+    probability: 0.5
+  - target: inventory_service
+    type: http_503
+    mode: random
+    probability: 0.5
+
+policy:
+  retry:
+    enabled: false
+
+policies:
+  payment_service:
+    retry:
+      enabled: true
+      max_attempts: 3
+  inventory_service:
+    retry:
+      enabled: true
+      max_attempts: 1
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1013

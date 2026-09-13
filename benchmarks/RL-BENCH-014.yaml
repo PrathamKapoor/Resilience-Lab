@@ -1,0 +1,63 @@
+experiment:
+  id: RL-BENCH-014
+  name: per-service-breaker-isolation
+  version: 1
+  description: Independent circuit-breaker and retry state per dependency during a burst outage.
+
+system:
+  services:
+    - name: payment_service
+      processing:
+        distribution: constant
+        mean: 5ms
+      capacity:
+        max_concurrency: 40
+        queue_limit: 0
+    - name: inventory_service
+      processing:
+        distribution: constant
+        mean: 5ms
+      capacity:
+        max_concurrency: 40
+        queue_limit: 0
+
+workload:
+  type: closed_loop
+  clients: 20
+  arrival_rate: 200
+  duration: 20s
+  warmup: 2s
+
+failure:
+  - target: payment_service
+    type: http_503
+    mode: burst
+    probability: 0.7
+    duration: 8s
+  - target: inventory_service
+    type: http_503
+    mode: burst
+    probability: 0.2
+    duration: 8s
+
+policy:
+  retry:
+    enabled: false
+
+policies:
+  payment_service:
+    retry:
+      enabled: true
+      max_attempts: 2
+    circuit_breaker:
+      enabled: true
+      threshold: 5
+      recovery_window: 3s
+  inventory_service:
+    retry:
+      enabled: false
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1014
