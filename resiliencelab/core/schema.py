@@ -34,11 +34,69 @@ class SeedStrategy(str, Enum):
     EXPLICIT = "explicit"
 
 
+class ProcessingSpec(BaseModel):
+    """Simulated service processing latency (deterministic when seeded)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    distribution: LatencyDistribution = LatencyDistribution.CONSTANT
+    mean: Duration = Field(default=0.0, ge=0)
+    std: Duration = Field(default=0.0, ge=0)
+    min: Duration = Field(default=0.0, ge=0)
+    max: Duration = Field(default=0.0, ge=0)
+
+
+class CapacitySpec(BaseModel):
+    """Simulated service-side capacity (distinct from client concurrency limits).
+
+    ``queue_limit`` mirrors the client-side concurrency semantics: ``None``
+    means an unbounded queue, ``0`` means reject immediately when saturated,
+    and ``N > 0`` bounds the number of waiting requests.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_concurrency: int = Field(default=50, ge=1)
+    queue_limit: int | None = Field(default=None, ge=0)
+
+
+class NetworkLinkSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    latency: Duration = Field(default=0.0, ge=0)
+    jitter: Duration = Field(default=0.0, ge=0)
+
+
+class NetworkEdgeSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(min_length=1)
+    target: str = Field(min_length=1)
+    latency: Duration = Field(default=0.0, ge=0)
+    jitter: Duration = Field(default=0.0, ge=0)
+
+
+class NetworkSpec(BaseModel):
+    """Simulated inter-service network latency applied per dependency call.
+
+    ``default`` applies to every edge unless a matching ``edges`` entry
+    overrides it. An edge matches by ``target`` (the dependency being called);
+    ``source`` is the caller's service name.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    default: NetworkLinkSpec | None = None
+    edges: list[NetworkEdgeSpec] = Field(default_factory=list)
+
+
 class ServiceSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1)
     depends_on: list[str] = Field(default_factory=list)
+    processing: ProcessingSpec | None = None
+    capacity: CapacitySpec | None = None
 
 
 class SystemSpec(BaseModel):
@@ -47,6 +105,7 @@ class SystemSpec(BaseModel):
     replicas: int = Field(default=1, ge=1)
     workers_per_replica: int = Field(default=1, ge=1)
     services: list[ServiceSpec] = Field(default_factory=list)
+    network: NetworkSpec | None = None
 
     @model_validator(mode="after")
     def _check_graph(self) -> SystemSpec:

@@ -1,0 +1,28 @@
+experiment:
+  id: RL-BENCH-009
+  name: service-processing-latency
+  version: 1
+  description: Increasing simulated service processing latency against a stable client.
+
+system:
+  services:
+    - name: payment_service
+      processing:
+        distribution: constant
+        mean: 50ms
+
+workload:
+  type: closed_loop
+  clients: 25
+  arrival_rate: 200
+  duration: 20s
+  warmup: 2s
+
+failure: []
+
+policy: {}
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1009

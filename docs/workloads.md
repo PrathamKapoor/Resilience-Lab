@@ -53,3 +53,5 @@ total = service + backoff + other
   event-loop scheduling — the residual `total − service − backoff`.
 
 This decomposition is reported per experiment under "Measurement semantics".
+Within the `service` component, the simulated network and processing latency
+and the wall-clock queue wait are further attributed (see `docs/simulation.md`).

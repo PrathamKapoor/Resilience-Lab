@@ -8,6 +8,7 @@ events are recorded as metrics.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from resiliencelab.metrics.collector import MetricsCollector
 from resiliencelab.resilience.errors import CallFailure
@@ -33,6 +34,7 @@ class ResilientClient:
         rng: Rng,
         request_id: int,
         dependency: str | None = None,
+        attempt_context: dict[str, Any] | None = None,
     ) -> object:
         last_status: dict[str, int | None] = {"status": None}
 
@@ -40,6 +42,7 @@ class ResilientClient:
             if self.metrics is None:
                 return
             if event == "attempt":
+                context = attempt_context or {}
                 self.metrics.record(
                     MetricsCollector.DOWNSTREAM,
                     request_id=request_id,
@@ -51,6 +54,10 @@ class ResilientClient:
                     if fields.get("status") is not None
                     else last_status["status"],
                     latency=fields.get("duration"),
+                    network_latency=context.get("network_latency"),
+                    processing_latency=context.get("processing_latency"),
+                    queue_wait=context.get("queue_wait"),
+                    service_rejected=context.get("service_rejected", False),
                 )
             else:
                 self.metrics.record(

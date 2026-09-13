@@ -171,11 +171,27 @@ def latency_components(records: list[Record]) -> dict[str, float]:
     def _mean(values: list[float]) -> float:
         return mean(values) if values else 0.0
 
+    network_vals = [
+        float(r["network_latency"])
+        for r in downstreams(records)
+        if r.get("network_latency") is not None
+    ]
+    processing_vals = [
+        float(r["processing_latency"])
+        for r in downstreams(records)
+        if r.get("processing_latency") is not None
+    ]
+    queue_vals = [
+        float(r["queue_wait"]) for r in downstreams(records) if r.get("queue_wait") is not None
+    ]
     return {
         "total": _mean(totals),
         "service": _mean(services),
         "retry": _mean(retries),
         "other": _mean(others),
+        "network": _mean(network_vals),
+        "processing": _mean(processing_vals),
+        "queue": _mean(queue_vals),
     }
 
 

@@ -2,94 +2,135 @@
 
 ## 1. Current Phase
 
-- **Vision** (all phases): evolve ResilienceLab into a 10/10 research-grade, reproducible, deployable resilience experimentation platform. See the master prompt's phase list below.
-- **Subphase just completed**: **Phase 1 — Scientific correctness** (workload arrival semantics + latency measurement attribution + metric definitions). This was the highest-impact correctness gap per the master prompt (it said: "The system must never silently claim to execute a workload type that it does not actually implement").
-- **Overall objective**: a reproducible simulated resilience laboratory for experimentally evaluating resilience policies under controlled workloads/failures. In-process fake services are a deliberate methodological choice; deployment targets the *control plane*, not the simulated services.
-- **Status**: Phase 1 **complete**. Tree has uncommitted Phase 1 changes (8 files). All gates green (79 tests, ruff, ruff format, mypy strict).
+- **Vision**: evolve ResilienceLab into a 10/10 research-grade, reproducible,
+  deployable resilience experimentation platform (master prompt phase list below).
+- **Subphase just completed**: **Phase 2 — Controlled Simulation Improvements**
+  (service processing latency, network latency/jitter, service-side capacity +
+  queueing, saturation, per-service simulation metrics). Builds directly on
+  Phase 1 (`1bf4ece`).
+- **Status**: Phase 2 complete, uncommitted. All gates green (93 tests, ruff,
+  ruff format, mypy strict). Tree has Phase 2 changes (14 modified + 5 new files).
+- **Core honesty invariant**: services are deliberate in-process simulations;
+  deployment targets the control plane only (see `docs/simulation.md`).
 
 ## 2. Work Completed
 
-### Prior subphases (commits `324ac3b`, `3af7af1`, `2a98643`) — unchanged
-Core platform (resilience engine, faults, schema, services, workloads, metrics, analysis, runner, artifacts, CLI, REST API, benchmarks), hardening (warmup-gated metrics, starvation yield, in-process execution, BackgroundTasks API, non-finite stats), and multi-service topology (service graph, per-target routing, cascade fan-out). See `git log`.
+### Prior (commits `324ac3b`, `3af7af1`, `2a98643`, `1bf4ece`)
+Core platform, hardening, multi-service topology, and Phase 1 (workload arrival
+semantics + latency attribution). See `git log`.
 
-### Phase 1 — Scientific correctness (this session, uncommitted)
-- **Workload arrival model** (`workloads/arrivals.py`, NEW): `ArrivalModel.gap(elapsed, rng)` computes inter-arrival gaps as a pure, seeded function of elapsed time. Implemented distinct semantics for all 7 `WorkloadType`s (closed_loop has no arrival model and raises). Fixed the previous bug where `burst`/`periodic`/`random` silently behaved as closed-loop.
-  - `constant_rate`: fixed `1/rate`; `open_loop`: exponential (poisson/exponential dist) or fixed (constant dist); `random`: Uniform(0, 2/rate); `burst`: `burst_size` fast gaps then `burst_interval` idle; `periodic`: sinusoidal rate with `period`/`burstiness`; `ramp`: linear 10%→full over `duration`.
-- **Generator refactor** (`workloads/generator.py`): `_drive` now dispatches closed_loop → `_closed_loop` (unchanged, starvation fix intact) and everything else → `_arrival_loop` (single loop consuming `ArrivalModel.gap`). Removed the old `_open_loop`/`_ramp`/`_next_gap` and the silent fallthrough.
-- **Schema** (`core/schema.py`): added backward-compatible `WorkloadSpec` fields `burst_size` (default 10), `burst_interval` (1s), `period` (1s).
-- **Latency measurement semantics** (`metrics/transforms.py`): new `latency_components(records)` decomposes mean request latency into `total` / `service` (Σ per-attempt downstream latency) / `retry` (Σ retry-event delays) / `other` (queue + timeout + scheduling residual). Report (`experiments/report.py`) now emits a "Measurement semantics" section with these numbers plus explicit units/definitions.
-- **Tests** (`tests/test_workloads.py`, NEW — 12 tests): deterministic proofs that each mode produces distinct traffic (fixed vs stochastic vs burst pattern vs oscillation vs ramp), stochastic reproducibility, and latency decomposition correctness.
-- **Docs**: `docs/workloads.md` (NEW) documenting mode semantics, fields, and latency attribution; `docs/architecture.md` pointer added.
+### Phase 2 (this session, uncommitted)
+- **Schema** (`core/schema.py`): new `ProcessingSpec` (constant/uniform/normal/
+  lognormal/Pareto + mean/std/min/max), `CapacitySpec` (max_concurrency,
+  queue_limit mirroring client-concurrency semantics), `NetworkLinkSpec`/`NetworkEdgeSpec`/
+  `NetworkSpec` (default + per-edge latency/jitter), `ServiceSpec.processing`/`.capacity`,
+  `SystemSpec.network`. All optional → existing configs unchanged.
+- **`faults/model.py`**: added `LatencyDistribution.CONSTANT` (+ handler in `sample_latency`).
+- **New simulation modules** (`services/`):
+  - `capacity.py` — `ServiceCapacity` (async slot acquisition, bounded/unbounded/
+    rejecting queue, wait measurement, `peak_queue_depth`, `rejected_count`,
+    `snapshot()`), `ServiceSaturated` (retryable `CallFailure` status 503).
+  - `processing.py` — pure seeded `sample_processing_latency(spec, rng)`.
+  - `network.py` — `resolve_network_link` (edge/precedence) + `network_delay`
+    (base + uniform jitter), `NETWORK_RNG_SALT`.
+- **`dependency.py`**: `invoke()` now flows queue→processing→fault; accepts
+  `attempt_context` to report `service_rejected`/`queue_wait`/`processing_latency`;
+  emits `service_queued`/`service_rejected` events; exposes `capacity_snapshot()`;
+  processing stream = `generator_for(seed, request_id, service_salt, PROCESSING_RNG_SALT)`.
+- **`client.py`**: `execute(..., attempt_context=...)` attaches
+  `network_latency`/`processing_latency`/`queue_wait`/`service_rejected` to each
+  `downstream` row.
+- **`runner.py`**: builds per-service processing/capacity, resolves network links,
+  computes seeded network delay per call, collects per-service capacity snapshots
+  into `RunResult.service_metrics`; closure variables bound via defaults (B023).
+- **`result.py`**: `RunResult.service_metrics` + `ExperimentResult.service_metrics_per_run()`.
+- **`metrics/transforms.py`**: `latency_components` now also reports `network`/
+  `processing`/`queue` means.
+- **`report.py`**: Measurement-semantics section reports simulated sub-components;
+  new "Simulated service capacity" section (per-service capacity, peak queue,
+  rejections). Fixed a `U+2212` (minus sign) that broke `console.print` on Windows
+  encodings — keep CLI output ASCII.
+- **`artifacts.py`**: `experiment.json` summary includes `service_metrics_per_run`.
+- **Benchmarks**: new `RL-BENCH-009` (service latency), `010` (network jitter),
+  `011` (capacity saturation), `012` (retry amplification under saturation);
+  registered + documented. `docs/simulation.md` (new) documents the whole model.
 
-## 3. Files Changed (uncommitted)
+## 3. Files Changed
 
-- `resiliencelab/workloads/arrivals.py` (NEW), `resiliencelab/workloads/generator.py`
-- `resiliencelab/core/schema.py`, `resiliencelab/metrics/transforms.py`, `resiliencelab/experiments/report.py`
-- `tests/test_workloads.py` (NEW), `docs/workloads.md` (NEW), `docs/architecture.md`
-- Verify with `git status --short`, `git diff --stat`.
+Modified: `core/schema.py`, `faults/model.py`, `services/{dependency,client}.py`,
+`experiments/{runner,result,report,artifacts,benchmarks}.py`,
+`metrics/transforms.py`, `README.md`, `docs/{architecture,benchmarks,workloads}.md`.
+New: `services/{capacity,network,processing}.py`, `docs/simulation.md`,
+`benchmarks/RL-BENCH-{009..012}.yaml`, `tests/test_simulation.py`.
 
-## 4. Architecture / State (VERIFIED)
+## 4. Simulation semantics (the important part)
 
-- **Execution model**: fully in-process. `ExperimentRunner.run_async` → per seed: fresh `Clock`, `MetricsCollector`, `ResiliencePolicy`, N `DependencyService`s (per graph node), one shared `ResilientClient`, `SystemUnderTest`, `WorkloadGenerator`. SUT fans out over dependencies in topological order, short-circuiting on first failure. No HTTP in hot path.
-- **Workloads**: `WorkloadGenerator.run` gates warmup via `MetricsCollector.set_recording`; closed-loop saturates against a `send` coroutine; all other modes drive an `ArrivalModel` gap sequence with `generator_for(seed, 200_000)`.
-- **Metrics flow**: `PolicyExecutor` emits `attempt`/`retry`/`rejected`; `ResilientClient` records `downstream` (per attempt, with `latency` = attempt duration) and `event` rows; workload records `request` rows (`latency` = total). Latency decomposition relies on `request_id` correlation across the three record kinds.
-- **Config**: `pyproject.toml` — ruff `E,F,I,N,UP,B,SIM,C4,ASYNC`, ignores `E501,B008,SIM108,C901,UP042,N818`; mypy strict `python_version=3.12`; pytest `asyncio_mode=auto`. Python 3.13.14, package installed editable `[dev,parquet]`.
+- **Simulated vs wall-clock**: the experiment pipeline is wall-clock driven
+  (workloads, metrics timestamps, recovery). Simulated delays are seeded
+  *decisions* applied via `asyncio.sleep`; *measurement* is wall-clock.
+  Documented in `docs/simulation.md`.
+- **Processing**: per-request, seeded (`generator_for(seed, request_id, service_salt,
+  0x7072)`); constant/uniform/normal/lognormal/pareto.
+- **Network**: per-call, seeded (`generator_for(seed, request_id, 0x4E57, idx)`),
+  base ± uniform jitter, floored at 0; resolved per (source,target) with `default`.
+- **Queueing**: `ServiceCapacity.acquire()` returns wall-clock wait; `queue_limit`
+  None/0/N → unbounded/reject/bounded; rejections raise retryable 503
+  (`ServiceSaturated`), so retries amplify them (scenario F).
+- **Capacity** vs **client concurrency**: service-side `capacity` (dependency
+  processing slots) is explicitly separate from the client-side policy
+  `concurrency` limiter.
+- **Determinism**: same config + seed ⇒ same processing/network decisions; queue
+  order deterministic given arrival; wall-clock completion (esp. saturation
+  rejection rate) varies by host — do NOT assert exact cross-run equality.
 
-## 5. Decisions Made (all still hold)
+## 5. Decisions & Gotchas
 
-- In-process execution (nested-ASGI deadlock finding); `str, Enum`; `CallFailure` name; `Rng` protocol; timeout-vs-`DeadlineExceeded` contract; `recovery_time=inf` honesty; mypy target 3.12.
-- **Phase 1**: arrival gaps made *pure and seeded*; stochastic reproducibility asserted on the gap functions, never on wall-clock counts/timings. `closed_loop` explicitly has no arrival model.
-- Latency decomposition is **derived post-hoc** from existing records (no hot-path change), documented honestly; "other" includes timeout/queue/scheduling residual.
+- Latency decomposition: `total = service(wall) + backoff + other(wall)`;
+  `network`/`processing` (simulated) and `queue` (wall) are sub-components of
+  `service`, reported separately.
+- `ServiceSaturated` is retryable on purpose (models transient overload).
+- Keep CLI output ASCII — `console.print` of markdown with `U+2212` raises
+  `UnicodeEncodeError` under the Windows cp1252 console (`report`/`reproduce` paths).
+  Do not reintroduce `−`/`–` in user-facing strings.
 
-## 6. Requirements & Constraints
+## 6. Testing & Verification
 
-- Preserve: warmup exclusion from ALL metric kinds; per-request seeded determinism (service-0 salt = `FAULT_RNG_SALT`); `max_attempts` = total attempts; amplification definition; `recovery_time=inf`; strict mypy + ruff + format clean (`make check`); no `python -m resiliencelab.cli.app` (use `resiliencelab` or `python -m resiliencelab`).
-- Do not add code comments unless asked; type hints + naming instead.
-- Do NOT misrepresent the in-process fake services as real microservices; simulation is deliberate.
-- Do not assert wall-clock equality in tests (duration-based runs vary); assert on seeded RNG behavior or single-run invariants.
+- `python -m pytest` → **93 passed** (14 new in `tests/test_simulation.py`:
+  processing constant/normal-reproducible/uniform-bounded/none; network edge
+  precedence/jitter bounds/reproducible; capacity reject/queue-wait/peak/snapshot;
+  dependency processing recorded; capacity rejection recorded + raises; runner
+  reflects simulated components).
+- `ruff check`, `ruff format --check`, `mypy resiliencelab` (55 files) → clean.
+- CLI E2E (executed): `validate` all 12 benchmarks (OK); `run` 009 (p95≈0.062,
+  avail 1.0), 010 (p95≈0.046), 011 (avail 0.034, ~78k rejections), 012
+  (amplification 3.02, avail 0.42); `report` RL-BENCH-011 shows processing=0.0100s +
+  capacity=5/rejections; `reproduce` RL-BENCH-011; `run` RL-BENCH-001 regression
+  (avail 0.902, ampl 1.20).
+- Saturation availability has wall-clock variance (0.0326 vs 0.0342 across runs) —
+  expected, documented.
 
-## 7. Testing & Verification
+## 7. Known Gaps (tracked, VERIFIED, not addressed this phase)
 
-- `python -m pytest` → **79 passed** (was 67; +12 workload/latency tests).
-- `ruff check`, `ruff format --check`, `mypy resiliencelab` (strict, 52 files) → clean.
-- CLI smoke (actually executed): `run` open_loop (availability 1.0, throughput 58.8) and `run` burst (availability 1.0) — both complete and produce artifact bundles.
-- Not verified: Docker/K8s, Postgres/Redis (unwired — known gap), full paper reproduction, per-service policies, non-closed-loop benchmark configs (all 8 benchmarks remain `closed_loop`).
+1. `POST /experiments/{id}/cancel` → 501. 2. `make reproduce-paper` → `--all`
+flag doesn't exist. 3. Postgres/Redis unwired; in-memory registry. 4. No workers/
+job queue. 5. No auth/quotas. 6. No dashboard. 7. Per-service *policies*
+(simulation is per-service, but the resilience policy is still shared). 8.
+`endpoint_mix`/`payload_size` accepted-unwired. 9. `paper/` outline only.
+10. Adaptive policies not implemented.
 
-## 8. Known Gaps (from master-prompt audit — VERIFIED)
+## 8. Next Phases (master prompt order)
 
-1. `POST /experiments/{id}/cancel` → HTTP 501 (`api/app.py`).
-2. `make reproduce-paper` → `reproduce --all`, but no `--all` flag (broken).
-3. Postgres/Redis provisioned in compose but **unwired**; registry in-memory.
-4. No worker/job execution architecture; no auth/quotas.
-5. No dashboard UI.
-6. Policies shared across services (no per-service policy isolation).
-7. `endpoint_mix` / `payload_size` accepted but unwired.
-8. `paper/` outline only, not an executable research artifact.
-9. Adaptive policy (RL/bandits) documented but not implemented.
+Phase 3 per-service policies → Phase 4 event model/observability → Phase 5
+statistical/factorial → Phase 6 persistence + workers → Phase 7 cancellation →
+Phase 8 API → Phase 9 dashboard → Phase 10 deploy/security → Phase 11 research
+artifact/reproduce-paper → Phase 12 adaptive.
 
-## 9. Next Phases (per master prompt, in order)
+## 9. Agent Instructions
 
-- **Phase 2 — Simulation model**: service processing latency, network latency/jitter, connection failures, queueing, service/dependency saturation, resource constraints (all controlled + documented).
-- **Phase 3 — Per-service policies**: `policy.<service>` overrides; add policy-isolation tests; keep backward compat.
-- **Phase 4 — Event model**: first-class structured `ExperimentStarted/RequestStarted/RetryScheduled/CircuitOpened/...` events with correlation context driving timelines/analysis.
-- **Phase 5 — Statistical/factorial upgrades** (interaction analysis, Pareto frontier, multiple comparisons).
-- **Phase 6 — Persistence + job queue/workers** (Postgres migrations, Redis/RQ or Celery).
-- **Phase 7 — Cancellation + lifecycle.** **Phase 8 — API productionization.** **Phase 9 — Dashboard.** **Phase 10 — Deployment/security/quotas.** **Phase 11 — Research artifact + `reproduce-paper`.** **Phase 12 — Adaptive policies.**
-
-Before starting any phase: run `make check`, read the relevant module, keep all three gates green after each change.
-
-## 10. Critical Context (bugs/decisions that shaped the code — do not regress)
-
-- `await asyncio.sleep(0)` in `workloads/generator.py:_closed_loop` prevents event-loop starvation on fully-synchronous call chains — do not remove.
-- Warmup gating via `MetricsCollector.recording` — do not bypass; warmup writes no request/downstream rows.
-- Nested `httpx.ASGITransport` deadlocks → no HTTP in experiment path.
-- starlette ≥0.52 `TestClient` doesn't run `asyncio.create_task` fire-and-forget → API `/run` uses `BackgroundTasks`; `Runtime.submit` is the production path.
-- Never name scratch files after stdlib modules (`inspect.py` incident); scratch lives in `%TEMP%\opencode`.
-- PowerShell `Select-Object` truncates/wraps long lines — verify suspicious output against the file.
-- Git identity: `ResilienceLab <resiliencelab@example.com>`; no remote.
-
-## 11. Agent Instructions
-
-- Phase 1 changes are **uncommitted**; commit them first (green, message e.g. "Phase 1: workload arrival semantics + latency attribution"), then continue with Phase 2.
-- Do not rewrite the in-process execution model, exception taxonomy, timeout contract, metrics-gating, or the arrival model without understanding §5/§10.
-- Preserve the invariant "same seed + same config ⇒ reproducible stochastic decisions" while "wall-clock completion varies".
+- Phase 2 is **uncommitted**; commit first (message e.g.
+  `feat: add controlled service and network simulation`), gates already green.
+- Preserve: in-process model, exception taxonomy, timeout contract, warmup gating,
+  `await asyncio.sleep(0)` (closed-loop starvation fix), arrival model, ASCII-only
+  CLI output, per-service simulation seeds.
+- Do not conflate service `capacity` with client `concurrency`, and do not claim
+  simulated latency equals real latency (docs/simulation.md honesty statement).

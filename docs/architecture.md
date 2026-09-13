@@ -11,7 +11,9 @@ ExperimentRunner (experiments/runner.py)
       ├── ResiliencePolicy (resilience/policy.py: retry, backoff, jitter,
       │                     circuit breaker, concurrency, timeout)
       ├── FaultInjector list (faults/model.py)
-      ├── SystemUnderTest (services/sut.py) + DependencyService (services/dependency.py)
+      ├── Simulated network (services/network.py)
+      ├── DependencyService (services/dependency.py): capacity/queue + processing
+      ├── SystemUnderTest (services/sut.py)
       ├── WorkloadGenerator (workloads/generator.py)
       └── MetricsCollector (metrics/collector.py)
             │
@@ -22,6 +24,13 @@ Analysis (analysis/): statistics, comparison, recovery, scoring, interactions
 Artifacts (experiments/artifacts.py): configuration, raw records, analysis,
 timeline, report, manifest with SHA256 hashes
 ```
+
+## Simulation model
+
+Dependency services are simulated: each call flows through a seeded network
+delay, an explicit service-side capacity/queue, a seeded processing delay, and
+fault injection. See `docs/simulation.md` for full semantics and the
+explicit simulation/wall-clock distinction.
 
 Key design decisions:
 
@@ -37,6 +46,10 @@ Key design decisions:
 - Workloads are either client-driven (`closed_loop`) or arrival processes whose
   inter-arrival gaps are pure, seeded functions of elapsed time (`workloads/arrivals.py`);
   see `docs/workloads.md` for the mode semantics and latency-attribution model.
+- Controlled simulation: network latency/jitter, service processing time, and
+  service capacity/queueing are simulated, seeded phenomena (`services/network.py`,
+  `services/processing.py`, `services/capacity.py`) — distinct from the
+  client-side concurrency limit. See `docs/simulation.md`.
 - Multi-service topology: `system.services` declares a dependency graph
   (`name` plus `depends_on`). The runner instantiates one
   `DependencyService` per entry, routes each `failure` entry's injectors to

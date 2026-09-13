@@ -1,0 +1,38 @@
+experiment:
+  id: RL-BENCH-012
+  name: retry-amplification-under-saturation
+  version: 1
+  description: Retries increase pressure and downstream calls on a saturated dependency.
+
+system:
+  services:
+    - name: payment_service
+      processing:
+        distribution: constant
+        mean: 20ms
+      capacity:
+        max_concurrency: 8
+        queue_limit: 0
+
+workload:
+  type: closed_loop
+  clients: 50
+  arrival_rate: 200
+  duration: 20s
+  warmup: 2s
+
+failure: []
+
+policy:
+  retry:
+    enabled: true
+    max_attempts: 4
+  backoff:
+    type: exponential
+    base: 10ms
+    maximum: 100ms
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1012
