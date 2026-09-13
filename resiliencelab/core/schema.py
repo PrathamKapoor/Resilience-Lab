@@ -111,6 +111,9 @@ class WorkloadSpec(BaseModel):
     payload_size: int = Field(default=64, ge=0)
     burstiness: float = Field(default=1.0, gt=0)
     endpoint_mix: list[str] = Field(default_factory=lambda: ["/"])
+    burst_size: int = Field(default=10, ge=1)
+    burst_interval: Duration = Field(default=1.0, gt=0)
+    period: Duration = Field(default=1.0, gt=0)
 
 
 class FailureSpec(BaseModel):
