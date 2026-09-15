@@ -6,8 +6,6 @@ from collections.abc import Iterable
 
 import numpy as np
 
-from resiliencelab.analysis.statistics import bootstrap_ci
-
 
 def two_way_interaction(
     a_off_b_off: Iterable[float],
@@ -57,9 +55,9 @@ def interaction_with_uncertainty(
             bb = _resample(rng, a_on_b_on, larger)
             dod = two_way_interaction(aa, ab, ba, bb)["interaction"]
             deltas.append(dod)
-        result["interaction_ci_low"], result["interaction_ci_high"] = bootstrap_ci(
-            deltas, resamples=1
-        )
+        if deltas:
+            result["interaction_ci_low"] = float(np.percentile(deltas, 2.5))
+            result["interaction_ci_high"] = float(np.percentile(deltas, 97.5))
     return result
 
 

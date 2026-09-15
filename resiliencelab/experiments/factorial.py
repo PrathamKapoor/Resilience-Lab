@@ -1,44 +1,36 @@
-"""Automated factorial experiment-matrix generation."""
+"""Automated factorial experiment-matrix generation (design-expansion layer)."""
 
 from __future__ import annotations
 
-import copy
-import itertools
 from typing import Any
 
+from resiliencelab.analysis.design import build_design
 from resiliencelab.core.schema import ExperimentSpec
-
-
-def _set_path(mapping: dict[str, Any], path: str, value: Any) -> None:
-    parts = path.split(".")
-    target = mapping
-    for part in parts[:-1]:
-        target = target.setdefault(part, {})
-    if value is None:
-        target.pop(parts[-1], None)
-    else:
-        target[parts[-1]] = value
 
 
 def generate_matrix(
     base: ExperimentSpec,
     factors: dict[str, list[Any]],
     *,
-    id_template: str = "{id}_{i:02d}",
-    name_template: str = "{name} [{i}]",
+    id_template: str | None = None,
+    name_template: str | None = None,
 ) -> list[ExperimentSpec]:
-    keys = list(factors.keys())
-    if not keys:
-        return [base]
-    value_sets = [factors[key] for key in keys]
-    base_data = base.model_dump(mode="json")
+    conditions = build_design(base, factors)
     generated: list[ExperimentSpec] = []
-    for index, combo in enumerate(itertools.product(*value_sets)):
-        data = copy.deepcopy(base_data)
-        for path, value in zip(keys, combo, strict=True):
-            _set_path(data, path, value)
-        data["id"] = id_template.format(id=base.id, i=index)
-        data["name"] = name_template.format(name=base.name, i=index)
+    for condition in conditions:
+        data = condition.spec.model_dump(mode="json")
+        data["id"] = (
+            f"{base.id}_{condition.condition_id}"
+            if id_template is None
+            else id_template.format(id=base.id, i=condition.index, combo_id=condition.condition_id)
+        )
+        data["name"] = (
+            f"{base.name} [{condition.label()}]"
+            if name_template is None
+            else name_template.format(
+                name=base.name, i=condition.index, combo_id=condition.condition_id
+            )
+        )
         generated.append(ExperimentSpec.model_validate(data))
     return generated
 

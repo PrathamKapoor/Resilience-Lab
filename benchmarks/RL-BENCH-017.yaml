@@ -1,0 +1,55 @@
+experiment:
+  id: RL-BENCH-017
+  name: policy-by-fault-factorial
+  version: 1
+  description: Full-factorial design measuring policy main effects and policy x fault interactions. Replicates share deterministic seeds for paired comparison.
+
+system:
+  services:
+    - name: payment_service
+      processing:
+        distribution: constant
+        mean: 15ms
+      capacity:
+        max_concurrency: 20
+        queue_limit: 10
+
+workload:
+  type: closed_loop
+  clients: 40
+  arrival_rate: 150
+  duration: 30s
+  warmup: 5s
+
+failure:
+  - target: payment_service
+    type: http_503
+    mode: burst
+    probability: 1.0
+    duration: 10s
+    start: 10s
+
+policy:
+  retry:
+    enabled: true
+    max_attempts: 3
+  backoff:
+    type: exponential
+    base: 100ms
+    maximum: 2s
+    jitter: full
+  circuit_breaker:
+    enabled: true
+    threshold: 8
+    recovery_window: 10s
+  timeout:
+    total: 1.5s
+  concurrency:
+    enabled: true
+    limit: 40
+    queue_limit: 20
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1017

@@ -49,6 +49,8 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
         "policies": _policy_provenance(result),
         "metrics_per_run": result.metrics_per_run(),
         "service_metrics_per_run": result.service_metrics_per_run(),
+        "seeds": result.seeds(),
+        "repetitions": len(result.runs),
     }
     record("experiment.json", json.dumps(summary, indent=2).encode("utf-8"))
 
@@ -119,6 +121,13 @@ def _build_statistics(result: ExperimentResult) -> dict[str, Any]:
     for run in per_run:
         for key, value in run.items():
             metrics.setdefault(key, []).append(value)
-    from resiliencelab.analysis.statistics import summarize
+    from resiliencelab.analysis.statistics import STAT_ANALYSIS_VERSION, summarize
 
-    return {key: summarize(values) for key, values in metrics.items()}
+    metric_summaries = {key: summarize(values) for key, values in metrics.items()}
+    return {
+        "analysis_version": STAT_ANALYSIS_VERSION,
+        "resampling_unit": "repetition",
+        "statistical_method": "t_mean_ci",
+        "confidence_level": 0.95,
+        "metrics": metric_summaries,
+    }

@@ -17,7 +17,6 @@ from resiliencelab.core.schema import ExperimentSpec
 from resiliencelab.events import event_from_dict
 from resiliencelab.experiments.artifacts import write_artifacts
 from resiliencelab.experiments.benchmarks import normalize_benchmark_name, resolve_benchmark_path
-from resiliencelab.experiments.factorial import generate_matrix
 from resiliencelab.experiments.report import automatic_analysis
 from resiliencelab.experiments.result import ExperimentResult
 from resiliencelab.experiments.runner import ExperimentRunner
@@ -206,6 +205,7 @@ def events(
 def compare(
     experiment_ids: Annotated[list[str], typer.Argument(help="Two or more experiment IDs")],
     store: Annotated[str | None, typer.Option()] = None,
+    paired: Annotated[bool, typer.Option("--paired", help="Match replicates by index")] = False,
 ) -> None:
     if len(experiment_ids) < 2:
         _err("compare requires at least two experiment IDs")
@@ -216,10 +216,10 @@ def compare(
             _err(f"no results for `{experiment_id}`")
         data = json.loads(summary_path.read_text(encoding="utf-8"))
         experiments.append(data)
-    from resiliencelab.analysis.comparison import build_comparison
+    from resiliencelab.analysis.comparison import build_comparison, build_paired_comparison
 
     comparison = build_comparison(experiments)
-    table = Table(title="Policy comparison (means)")
+    table = Table(title="Condition means (n = repetitions)")
     table.add_column("metric", justify="right")
     for experiment in comparison["experiments"]:
         table.add_column(experiment["name"], justify="right")
@@ -235,9 +235,24 @@ def compare(
     for metric in metrics:
         table.add_row(
             metric,
-            *[f"{row[metric]['mean']:.4f}" for row in rows],
+            *[f"{row[metric]['mean']:.4f} (n={int(row[metric].get('n', 0))})" for row in rows],
         )
     console.print(table)
+
+    if paired and len(experiments) >= 2:
+        paired_result = build_paired_comparison(experiments[0], experiments[1], metrics)
+        console.print(
+            f"\nPaired difference ({paired_result['reference']} - {paired_result['versus']}, "
+            f"matched replicates n={paired_result['n_matched']}):"
+        )
+        for metric in metrics:
+            stats = paired_result["metrics"][metric]
+            console.print(
+                f"  {metric}: Δ={stats['mean_difference']:.4f} "
+                f"95% CI [{stats['ci_low']:.4f}, {stats['ci_high']:.4f}], "
+                f"d={stats['cohens_d_paired']:.3f}"
+            )
+
     if "effects" in comparison:
         console.print("\nEffect sizes (Cohen's d) versus baseline:")
         for effect in comparison["effects"]:
@@ -245,7 +260,9 @@ def compare(
             for metric in metrics:
                 key = f"{metric}_cohens_d"
                 if key in effect:
-                    console.print(f"    {metric}: {effect[key]:.3f}")
+                    console.print(
+                        f"    {metric}: {effect[key]:.3f} (n={effect.get(f'{metric}_n', 0)})"
+                    )
 
 
 @app.command()
@@ -290,25 +307,80 @@ def matrix(
     path: Annotated[str, typer.Argument(help="Base experiment YAML")],
     factors: Annotated[str | None, typer.Option(help="JSON file of factor values")] = None,
     store: Annotated[str | None, typer.Option()] = None,
+    metric: Annotated[str, typer.Option(help="Metric for main effects")] = "availability",
 ) -> None:
     spec = load_yaml(path)
     factor_map = _load_factors(factors) if factors else None
+    from resiliencelab.analysis.design import build_design, interaction_effect, main_effect
     from resiliencelab.experiments.factorial import CORE_FACTORS
 
-    variants = generate_matrix(spec, factor_map or CORE_FACTORS)
-    console.print(f"Generated {len(variants)} experiment variants")
-    results: list[ExperimentResult] = []
-    for variant in variants:
-        console.print(f"  running {variant.id} ({variant.name}) ...")
-        result = _run_spec(variant)
+    effective_factors = factor_map or CORE_FACTORS
+    conditions = build_design(spec, effective_factors)
+    console.print(f"Generated {len(conditions)} experiment conditions")
+    entries: list[dict[str, Any]] = []
+    observations: dict[str, dict[str, list[float]]] = {}
+    for condition in conditions:
+        console.print(f"  running {condition.condition_id} ...")
+        result = _run_spec(condition.spec)
         _store_result(result, _store_for(store))
-        results.append(result)
+        entry = result.as_comparison_entry()
+        entry["condition_id"] = condition.condition_id
+        entries.append(entry)
+        for row in entry["metrics_per_run"]:
+            for metric_name, value in row.items():
+                observations.setdefault(metric_name, {}).setdefault(
+                    condition.condition_id, []
+                ).append(float(value))
+
     from resiliencelab.analysis.comparison import build_comparison
 
-    comparison = build_comparison([r.as_comparison_entry() for r in results])
+    comparison = build_comparison(entries)
     comparison_path = _store_for(store) / "matrix_comparison.json"
     comparison_path.write_text(json.dumps(comparison, indent=2, default=str), encoding="utf-8")
+
+    design_doc = {
+        "analysis_version": comparison.get("analysis_version"),
+        "base_experiment": spec.id,
+        "factors": effective_factors,
+        "conditions": [
+            {
+                "condition_id": c.condition_id,
+                "index": c.index,
+                "factors": c.factors,
+                "label": c.label(),
+                "spec_id": c.spec.id,
+            }
+            for c in conditions
+        ],
+    }
+    design_path = _store_for(store) / "matrix_design.json"
+    design_path.write_text(json.dumps(design_doc, indent=2, default=str), encoding="utf-8")
+
+    effects: dict[str, Any] = {}
+    condition_observations = observations.get(metric, {})
+    effects["metric"] = metric
+    effects["main_effects"] = [
+        main_effect(conditions, condition_observations, factor) for factor in effective_factors
+    ]
+    binary_pairs = []
+    factor_names = list(effective_factors)
+    for i, fa in enumerate(factor_names):
+        for fb in factor_names[i + 1 :]:
+            a_levels = {c.factors.get(fa) for c in conditions}
+            b_levels = {c.factors.get(fb) for c in conditions}
+            if len(a_levels) == 2 and len(b_levels) == 2:
+                binary_pairs.append((fa, fb))
+    for fa, fb in binary_pairs:
+        key = f"interaction_{fa}_x_{fb}"
+        try:
+            effects[key] = interaction_effect(conditions, condition_observations, fa, fb)
+        except ValueError:
+            continue
+    effects_path = _store_for(store) / "matrix_effects.json"
+    effects_path.write_text(json.dumps(effects, indent=2, default=str), encoding="utf-8")
     console.print(f"Comparison written to {comparison_path.resolve()}")
+    console.print(f"Design written to {design_path.resolve()}")
+    console.print(f"Effects written to {effects_path.resolve()}")
 
 
 def _load_factors(path: str) -> dict[str, Any]:
