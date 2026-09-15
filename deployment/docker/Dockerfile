@@ -16,6 +16,7 @@ RUN pip install --upgrade pip && pip install ".[parquet]"
 EXPOSE 8000
 
 ENV RESILIENCELAB_STORE=/data/results
+ENV RESILIENCELAB_SERVER_MODE=true
 
 VOLUME ["/data"]
 

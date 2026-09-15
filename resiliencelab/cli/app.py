@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Annotated, Any, NoReturn
 
@@ -390,6 +391,119 @@ def _load_factors(path: str) -> dict[str, Any]:
     if not isinstance(raw, dict):
         _err("factors file must contain a mapping of path -> list of values")
     return dict(raw)
+
+
+server_app = typer.Typer(help="Server-backed commands (requires PostgreSQL + Redis).")
+app.add_typer(server_app, name="server")
+
+
+def _server_client() -> Any:
+    import httpx
+
+    base_url = os.environ.get("RESILIENCELAB_API_URL", "http://127.0.0.1:8000")
+    return httpx.Client(base_url=base_url, timeout=120.0)
+
+
+@server_app.command("submit")
+def server_submit(
+    path: Annotated[str, typer.Argument(help="Path to experiment YAML")],
+    api_url: Annotated[str | None, typer.Option(help="API server URL")] = None,
+) -> None:
+    spec = load_yaml(path)
+    import yaml
+
+    config_data = {"experiment": {"id": spec.id, "name": spec.name, "version": spec.version}}
+    config_data.update(yaml.safe_load(Path(path).read_text(encoding="utf-8")))
+    client = _server_client()
+    response = client.post("/api/v1/experiments", json={"config": config_data})
+    if response.status_code != 201:
+        _err(f"server error: {response.text}")
+    data = response.json()
+    console.print(
+        f"[green]Queued[/green] experiment `{data['id']}` as {data.get('status', 'queued')}"
+    )
+
+
+@server_app.command("status")
+def server_status(
+    experiment_id: Annotated[str, typer.Argument()],
+) -> None:
+    client = _server_client()
+    response = client.get(f"/api/v1/experiments/{experiment_id}/status")
+    if response.status_code == 404:
+        _err(f"experiment `{experiment_id}` not found")
+    data = response.json()
+    table = Table(title=f"Experiment {data['id']}")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("Status", data["status"])
+    if data.get("error"):
+        table.add_row("Error", data["error"])
+    for run in data.get("runs", []):
+        table.add_row(f"  {run['run_id']}", run["status"])
+    console.print(table)
+
+
+@server_app.command("list")
+def server_list(
+    status: Annotated[str | None, typer.Option(help="Filter by status")] = None,
+) -> None:
+    client = _server_client()
+    params: dict[str, Any] = {}
+    if status:
+        params["status"] = status
+    response = client.get("/api/v1/experiments", params=params)
+    data = response.json()
+    table = Table(title="Experiments")
+    table.add_column("ID")
+    table.add_column("Name")
+    table.add_column("Status")
+    table.add_column("Created")
+    for exp in data.get("experiments", []):
+        table.add_row(exp["id"], exp.get("name", ""), exp["status"], exp.get("created_at", "")[:19])
+    console.print(table)
+
+
+@server_app.command("run")
+def server_run(
+    experiment_id: Annotated[str, typer.Argument()],
+) -> None:
+    client = _server_client()
+    response = client.post(f"/api/v1/experiments/{experiment_id}/run")
+    if response.status_code == 404:
+        _err(f"experiment `{experiment_id}` not found")
+    if response.status_code == 409:
+        _err(response.json().get("detail", "conflict"))
+    data = response.json()
+    console.print(f"[green]Queued[/green] experiment `{data['id']}` for execution")
+
+
+@server_app.command("cancel")
+def server_cancel(
+    experiment_id: Annotated[str, typer.Argument()],
+) -> None:
+    client = _server_client()
+    response = client.post(f"/api/v1/experiments/{experiment_id}/cancel")
+    if response.status_code == 404:
+        _err(f"experiment `{experiment_id}` not found")
+    data = response.json()
+    console.print(f"[yellow]Cancelled[/yellow] experiment `{data['id']}`")
+
+
+@server_app.command("health")
+def server_health() -> None:
+    client = _server_client()
+    response = client.get("/api/v1/health")
+    data = response.json()
+    table = Table(title="Server Health")
+    table.add_column("Component")
+    table.add_column("Status")
+    table.add_row("Overall", data["status"])
+    table.add_row("Mode", "server" if data.get("server_mode") else "local")
+    for name, status in data.get("checks", {}).items():
+        color = "green" if status == "ok" else "red"
+        table.add_row(name, f"[{color}]{status}[/{color}]")
+    console.print(table)
 
 
 def main() -> None:

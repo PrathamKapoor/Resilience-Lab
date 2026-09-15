@@ -1,5 +1,5 @@
 """ResilienceLab REST API."""
 
-from resiliencelab.api.app import Runtime, create_app
+from resiliencelab.api.app import LocalRuntime, create_app
 
-__all__ = ["Runtime", "create_app"]
+__all__ = ["LocalRuntime", "create_app"]

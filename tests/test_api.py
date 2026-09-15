@@ -4,12 +4,12 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
-from resiliencelab.api.app import Runtime, create_app
+from resiliencelab.api.app import LocalRuntime, create_app
 from resiliencelab.core.config import parse_experiment
 
 
 def _client() -> TestClient:
-    return TestClient(create_app(Runtime()))
+    return TestClient(create_app(LocalRuntime()))
 
 
 def _tiny_config() -> dict:
@@ -53,7 +53,7 @@ def test_run_completes_and_metrics_available() -> None:
 
 
 async def test_runtime_submit_runs_in_background() -> None:
-    runtime = Runtime()
+    runtime = LocalRuntime()
     spec = parse_experiment(
         {
             "experiment": {"id": "exp_bg", "name": "bg"},

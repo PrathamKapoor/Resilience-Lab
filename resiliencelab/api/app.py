@@ -1,15 +1,40 @@
-"""ResilienceLab REST API (FastAPI)."""
+"""ResilienceLab REST API (FastAPI) — persistent control plane."""
 
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
-from resiliencelab.core.config import ConfigValidationError, parse_experiment
+from resiliencelab.controlplane.database import init_session_factory
+from resiliencelab.controlplane.queue import (
+    enqueue_experiment,
+    get_redis_client,
+)
+from resiliencelab.controlplane.repositories import (
+    cancel_experiment as db_cancel_experiment,
+)
+from resiliencelab.controlplane.repositories import (
+    create_experiment as db_create_experiment,
+)
+from resiliencelab.controlplane.repositories import (
+    get_experiment as db_get_experiment,
+)
+from resiliencelab.controlplane.repositories import (
+    get_runs as db_get_runs,
+)
+from resiliencelab.controlplane.repositories import (
+    list_experiments as db_list_experiments,
+)
+from resiliencelab.controlplane.repositories import (
+    update_experiment_status,
+)
+from resiliencelab.core.config import ConfigValidationError, dump_yaml, parse_experiment
 from resiliencelab.core.schema import ExperimentSpec
 from resiliencelab.experiments.registry import ExperimentRegistry
 from resiliencelab.experiments.report import automatic_analysis, build_report
@@ -21,7 +46,13 @@ class ExperimentCreate(BaseModel):
     config: dict[str, Any]
 
 
-class Runtime:
+def _is_server_mode() -> bool:
+    return os.environ.get("RESILIENCELAB_SERVER_MODE", "").lower() in ("1", "true", "yes")
+
+
+class LocalRuntime:
+    """In-memory runtime for local mode — preserves all existing behavior."""
+
     def __init__(self) -> None:
         self.registry = ExperimentRegistry()
         self.runner = ExperimentRunner()
@@ -47,17 +78,322 @@ class Runtime:
         return self.jobs.get(experiment_id, {"status": "unknown", "result": None, "error": None})
 
 
-def _result_or_404(runtime: Runtime, experiment_id: str) -> ExperimentResult:
+def _result_or_404(runtime: LocalRuntime, experiment_id: str) -> ExperimentResult:
     result = runtime.registry.get_result(experiment_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"no result for {experiment_id}")
     return result
 
 
-def create_app(runtime: Runtime | None = None) -> FastAPI:
-    runtime = runtime or Runtime()
-    app = FastAPI(title="ResilienceLab API", version="0.1.0")
+def create_app(runtime: LocalRuntime | None = None, server_mode: bool | None = None) -> FastAPI:
+    use_server = server_mode if server_mode is not None else _is_server_mode()
+    app = FastAPI(title="ResilienceLab API", version="0.2.0")
+
+    if use_server:
+        try:
+            init_session_factory()
+        except Exception as exc:
+            raise RuntimeError(f"Failed to initialize database: {exc}") from exc
+
     v1 = APIRouter(prefix="/api/v1")
+
+    @v1.get("/health")
+    async def health() -> dict[str, Any]:
+        checks: dict[str, str] = {}
+        if use_server:
+            try:
+                from resiliencelab.controlplane.database import create_session
+
+                session = create_session()
+                session.execute(__import__("sqlalchemy").text("SELECT 1"))
+                session.close()
+                checks["postgres"] = "ok"
+            except Exception:
+                checks["postgres"] = "error"
+            try:
+                r = get_redis_client()
+                r.ping()
+                checks["redis"] = "ok"
+            except Exception:
+                checks["redis"] = "error"
+        return {"status": "ok", "server_mode": use_server, "checks": checks}
+
+    if use_server:
+        _register_server_routes(v1)
+    else:
+        _register_local_routes(v1, runtime)
+
+    app.include_router(v1)
+    return app
+
+
+def _register_server_routes(v1: APIRouter) -> None:
+    @v1.post("/experiments", status_code=201)
+    async def create_experiment(payload: ExperimentCreate) -> dict[str, Any]:
+        try:
+            spec = parse_experiment(payload.config)
+        except (ConfigValidationError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        def _create(db: Session) -> dict[str, Any]:
+            existing = db_get_experiment(db, spec.id)
+            if existing and existing.status in ("CREATED", "QUEUED"):
+                return {"id": spec.id, "name": spec.name, "status": "created"}
+            config_yaml = dump_yaml(spec)
+            from resiliencelab.experiments.provenance import hash_config
+
+            config_hash = hash_config(spec)
+            db_create_experiment(
+                db,
+                experiment_id=spec.id,
+                name=spec.name,
+                version=spec.version,
+                description=spec.description,
+                config_yaml=config_yaml,
+                config_hash=config_hash,
+                status="CREATED",
+            )
+            r = get_redis_client()
+            enqueue_experiment(r, spec.id, config_yaml, config_hash, spec.repetitions.count)
+            update_experiment_status(db, spec.id, "QUEUED")
+            return {"id": spec.id, "name": spec.name, "status": "queued"}
+
+        from resiliencelab.controlplane.database import create_session
+
+        db = create_session()
+        try:
+            result = _create(db)
+            db.commit()
+            return result
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    @v1.get("/experiments")
+    async def list_experiments(
+        status: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        from resiliencelab.controlplane.database import create_session
+
+        db = create_session()
+        try:
+            experiments = db_list_experiments(db, status=status, offset=offset, limit=limit)
+            return {
+                "experiments": [
+                    {
+                        "id": exp.experiment_id,
+                        "name": exp.name,
+                        "status": exp.status,
+                        "created_at": exp.created_at.isoformat() if exp.created_at else None,
+                    }
+                    for exp in experiments
+                ]
+            }
+        finally:
+            db.close()
+
+    @v1.get("/experiments/{experiment_id}")
+    async def get_experiment(experiment_id: str) -> dict[str, Any]:
+        from resiliencelab.controlplane.database import create_session
+
+        db = create_session()
+        try:
+            record = db_get_experiment(db, experiment_id)
+            if record is None:
+                raise HTTPException(status_code=404, detail=f"unknown experiment {experiment_id}")
+            return {
+                "experiment": {
+                    "id": record.experiment_id,
+                    "name": record.name,
+                    "version": record.version,
+                    "description": record.description,
+                    "status": record.status,
+                    "config_hash": record.config_hash,
+                    "artifact_path": record.artifact_path,
+                    "error_message": record.error_message,
+                    "created_at": record.created_at.isoformat() if record.created_at else None,
+                    "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+                }
+            }
+        finally:
+            db.close()
+
+    @v1.get("/experiments/{experiment_id}/runs")
+    async def list_runs(experiment_id: str) -> dict[str, Any]:
+        from resiliencelab.controlplane.database import create_session
+
+        db = create_session()
+        try:
+            runs = db_get_runs(db, experiment_id)
+            return {
+                "runs": [
+                    {
+                        "run_id": run.run_id,
+                        "run_index": run.run_index,
+                        "seed": run.seed,
+                        "status": run.status,
+                        "artifact_path": run.artifact_path,
+                        "error_message": run.error_message,
+                        "started_at": run.started_at.isoformat() if run.started_at else None,
+                        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                    }
+                    for run in runs
+                ]
+            }
+        finally:
+            db.close()
+
+    @v1.post("/experiments/{experiment_id}/run")
+    async def run_experiment(experiment_id: str) -> dict[str, Any]:
+        from resiliencelab.controlplane.database import create_session
+
+        db = create_session()
+        try:
+            record = db_get_experiment(db, experiment_id)
+            if record is None:
+                raise HTTPException(status_code=404, detail=f"unknown experiment {experiment_id}")
+            if record.status not in ("CREATED", "COMPLETED", "CANCELLED", "FAILED"):
+                raise HTTPException(
+                    status_code=409, detail=f"experiment is {record.status}, cannot run"
+                )
+            import yaml
+
+            spec_data = yaml.safe_load(record.config_yaml)
+            spec = parse_experiment(spec_data)
+            config_yaml = str(record.config_yaml)
+            config_hash = str(record.config_hash)
+            r = get_redis_client()
+            enqueue_experiment(r, experiment_id, config_yaml, config_hash, spec.repetitions.count)
+            update_experiment_status(db, experiment_id, "QUEUED")
+            db.commit()
+            return {"id": experiment_id, "status": "queued"}
+        except HTTPException:
+            raise
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    @v1.post("/experiments/{experiment_id}/cancel")
+    async def cancel_experiment(experiment_id: str) -> dict[str, Any]:
+        from resiliencelab.controlplane.database import create_session
+
+        db = create_session()
+        try:
+            cancelled = db_cancel_experiment(db, experiment_id)
+            if not cancelled:
+                raise HTTPException(status_code=404, detail=f"unknown experiment {experiment_id}")
+            db.commit()
+            return {"id": experiment_id, "status": "cancelled"}
+        except HTTPException:
+            raise
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    @v1.get("/experiments/{experiment_id}/status")
+    async def experiment_status(experiment_id: str) -> dict[str, Any]:
+        from resiliencelab.controlplane.database import create_session
+
+        db = create_session()
+        try:
+            record = db_get_experiment(db, experiment_id)
+            if record is None:
+                raise HTTPException(status_code=404, detail=f"unknown experiment {experiment_id}")
+            runs = db_get_runs(db, experiment_id)
+            return {
+                "id": experiment_id,
+                "status": record.status,
+                "error": record.error_message,
+                "runs": [{"run_id": run.run_id, "status": run.status} for run in runs],
+            }
+        finally:
+            db.close()
+
+    @v1.get("/experiments/{experiment_id}/metrics")
+    async def experiment_metrics(experiment_id: str) -> dict[str, Any]:
+        raise HTTPException(
+            status_code=501,
+            detail="metrics endpoint requires local results; use artifacts instead",
+        )
+
+    @v1.get("/experiments/{experiment_id}/timeline")
+    async def experiment_timeline(experiment_id: str) -> dict[str, Any]:
+        raise HTTPException(
+            status_code=501,
+            detail="timeline endpoint requires local results; use artifacts instead",
+        )
+
+    @v1.get("/experiments/{experiment_id}/events")
+    async def experiment_events(
+        experiment_id: str,
+        event_type: str | None = None,
+        service: str | None = None,
+        request_id: int | None = None,
+    ) -> dict[str, Any]:
+        raise HTTPException(
+            status_code=501,
+            detail="events endpoint requires local results; use artifacts instead",
+        )
+
+    @v1.get("/experiments/{experiment_id}/report", response_class=PlainTextResponse)
+    async def experiment_report(experiment_id: str) -> str:
+        raise HTTPException(
+            status_code=501,
+            detail="report endpoint requires local results; use artifacts instead",
+        )
+
+    @v1.get("/experiments/{experiment_id}/analysis")
+    async def experiment_analysis(experiment_id: str) -> dict[str, Any]:
+        raise HTTPException(
+            status_code=501,
+            detail="analysis endpoint requires local results; use artifacts instead",
+        )
+
+    @v1.get("/benchmarks")
+    async def list_benchmarks() -> dict[str, Any]:
+        from resiliencelab.experiments.benchmarks import list_standard_benchmarks
+
+        return {"benchmarks": list_standard_benchmarks()}
+
+    @v1.get("/policies")
+    async def list_policies() -> dict[str, Any]:
+        return {
+            "mechanisms": [
+                "retry",
+                "backoff",
+                "jitter",
+                "circuit_breaker",
+                "timeout",
+                "concurrency",
+            ]
+        }
+
+    @v1.get("/fault-models")
+    async def list_fault_models() -> dict[str, Any]:
+        from resiliencelab.faults.model import FailureKind, TemporalMode
+
+        return {
+            "failure_types": [k.value for k in FailureKind],
+            "temporal_modes": [m.value for m in TemporalMode],
+        }
+
+    @v1.get("/workloads")
+    async def list_workloads() -> dict[str, Any]:
+        from resiliencelab.core.schema import WorkloadType
+
+        return {"workload_types": [w.value for w in WorkloadType]}
+
+
+def _register_local_routes(v1: APIRouter, runtime: LocalRuntime | None) -> None:
+    runtime = runtime or LocalRuntime()
 
     @v1.post("/experiments", status_code=201)
     async def create_experiment(payload: ExperimentCreate) -> dict[str, Any]:
@@ -186,9 +522,6 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
         from resiliencelab.core.schema import WorkloadType
 
         return {"workload_types": [w.value for w in WorkloadType]}
-
-    app.include_router(v1)
-    return app
 
 
 app = create_app()
