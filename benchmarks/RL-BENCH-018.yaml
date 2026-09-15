@@ -1,0 +1,52 @@
+experiment:
+  id: RL-BENCH-018
+  name: retry-by-capacity-factorial
+  version: 1
+  description: Full-factorial design quantifying when retries improve availability and when they amplify saturation. Base experiment for retry x capacity expansion.
+
+system:
+  services:
+    - name: payment_service
+      processing:
+        distribution: constant
+        mean: 20ms
+      capacity:
+        max_concurrency: 50
+        queue_limit: 0
+
+workload:
+  type: closed_loop
+  clients: 60
+  arrival_rate: 300
+  duration: 20s
+  warmup: 3s
+
+failure:
+  - target: payment_service
+    type: http_503
+    mode: intermittent
+    probability: 0.5
+    duration: 8s
+    period: 12s
+
+policy:
+  retry:
+    enabled: false
+  backoff:
+    type: fixed
+    base: 50ms
+    maximum: 200ms
+    jitter: none
+  circuit_breaker:
+    enabled: false
+  timeout:
+    total: 800ms
+  concurrency:
+    enabled: true
+    limit: 50
+    queue_limit: 0
+
+repetitions:
+  count: 5
+  seed_strategy: deterministic
+  base_seed: 1018

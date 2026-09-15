@@ -19,13 +19,23 @@ def _fmt(value: float, ndigits: int = 4) -> str:
     return f"{value:.{ndigits}f}"
 
 
-def _summary_line(label: str, values: list[float], higher_is_better: bool = True) -> str:
+def _summary_line(label: str, values: list[float]) -> str:
     stats = summarize(values)
-    if "mean" not in stats:
+    if "mean" not in stats or stats.get("count", 0) == 0:
         return f"- **{label}**: no data"
+    n = int(stats.get("count", 0))
+    note = "" if n >= 2 else " (insufficient replicates for inference)"
     return (
-        f"- **{label}**: mean={_fmt(stats['mean'])} "
-        f"(95% CI [{_fmt(stats['ci_low'])}, {_fmt(stats['ci_high'])}])"
+        f"- **{label}**: mean={_fmt(stats['mean'])}, "
+        f"95% CI [{_fmt(stats['ci_low'])}, {_fmt(stats['ci_high'])}], n={n}{note}"
+    )
+
+
+def _statistical_provenance(result: ExperimentResult) -> str:
+    return (
+        "Analysis: repetition-level means with 95% t-based CI (resampling unit = "
+        "repetition); bootstrap/exact distribution when n>=2; determine "
+        "analyses key off `analysis_version` in artifacts."
     )
 
 
@@ -47,11 +57,11 @@ def automatic_analysis(result: ExperimentResult) -> str:
         "",
         "Observed (mean over repetitions, 95% CI reported):",
         _summary_line("availability", availability),
-        _summary_line("p95 latency (s)", p95, higher_is_better=False),
-        _summary_line("p99 latency (s)", p99, higher_is_better=False),
-        _summary_line("error rate", error_rate, higher_is_better=False),
-        _summary_line("failure amplification", amplification, higher_is_better=False),
-        _summary_line("time to recovery (s)", recovery, higher_is_better=False),
+        _summary_line("p95 latency (s)", p95),
+        _summary_line("p99 latency (s)", p99),
+        _summary_line("error rate", error_rate),
+        _summary_line("failure amplification", amplification),
+        _summary_line("time to recovery (s)", recovery),
         "",
         "Statistical confidence: 95% confidence intervals reported for primary metrics.",
         "",
@@ -215,9 +225,9 @@ def build_report(result: ExperimentResult) -> str:
         "service - backoff.",
         "",
         "Simulated sub-components of service time (see docs/simulation.md):",
-        f"- **network latency**: {_fmt(components['network'])}s mean simulated per-call delay.",
-        f"- **processing latency**: {_fmt(components['processing'])}s mean simulated service processing.",
-        f"- **queue wait**: {_fmt(components['queue'])}s mean wall-clock queue wait.",
+        f"- **network latency**: {_fmt(components.get('network', 0.0))}s mean simulated per-call delay.",
+        f"- **processing latency**: {_fmt(components.get('processing', 0.0))}s mean simulated service processing.",
+        f"- **queue wait**: {_fmt(components.get('queue', 0.0))}s mean wall-clock queue wait.",
         "",
         "Throughput is requests per second over the measured (post-warmup) window.",
         "Amplification is downstream calls per upstream request.",

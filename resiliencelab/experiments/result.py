@@ -64,10 +64,15 @@ class ExperimentResult:
     def run_events(self) -> list[Event]:
         return [event for run in self.runs for event in run.events]
 
+    def seeds(self) -> list[int]:
+        return [run.seed for run in self.runs]
+
     def as_comparison_entry(self) -> dict[str, Any]:
         return {
             "id": self.experiment.id,
             "name": self.experiment.name,
             "policy_name": self.policy_name,
             "metrics_per_run": self.metrics_per_run(),
+            "seeds": [run.seed for run in self.runs],
+            "repetitions": len(self.runs),
         }
