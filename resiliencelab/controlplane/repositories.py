@@ -1,14 +1,35 @@
-"""Repository for experiment persistence."""
+"""Repository for experiment persistence with atomic state transitions.
+
+State model:
+    CREATED -> QUEUED -> RUNNING -> COMPLETED
+    RUNNING -> CANCEL_REQUESTED -> CANCELLED
+    CREATED/QUEUED -> CANCELLED (immediate, before worker claim)
+
+Terminal states (immutable):
+    COMPLETED, FAILED, CANCELLED
+
+Race semantics:
+    - If completion wins the atomic terminal-state race, the run is COMPLETED.
+    - If cancellation wins before completion commits, the run is CANCELLED.
+    - Terminal states cannot be overwritten.
+"""
 
 from __future__ import annotations
 
 import datetime as dt
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from resiliencelab.controlplane.models import ExperimentRecord, RunRecord
+
+# States that cannot be changed once reached
+TERMINAL_STATES = frozenset({"COMPLETED", "FAILED", "CANCELLED"})
+
+
+def _is_terminal(status: Any) -> bool:
+    return str(status) in TERMINAL_STATES
 
 
 def create_experiment(
@@ -80,17 +101,102 @@ def update_experiment_status(
     )
 
 
-def cancel_experiment(session: Session, experiment_id: str) -> bool:
+def request_cancel(
+    session: Session,
+    experiment_id: str,
+    reason: str = "",
+) -> tuple[bool, str]:
+    """Atomically request cancellation of an experiment.
+
+    Returns (success, message):
+        - (True, "cancel_requested"): RUNNING -> CANCEL_REQUESTED
+        - (True, "cancelled"): CREATED/QUEUED -> CANCELLED (immediate)
+        - (False, "not_found"): experiment does not exist
+        - (False, "already_terminal"): already COMPLETED/FAILED/CANCELLED
+        - (False, "already_cancel_requested"): already CANCEL_REQUESTED
+
+    The caller should NOT treat (False, "already_terminal") as an error.
+    It means the experiment reached a terminal state before or during the request.
+    """
     record = get_experiment(session, experiment_id)
     if record is None:
-        return False
-    if record.status in ("CREATED", "QUEUED"):
-        update_experiment_status(session, experiment_id, "CANCELLED")
-        return True
-    if record.status == "RUNNING":
-        update_experiment_status(session, experiment_id, "CANCEL_REQUESTED")
-        return True
-    return False
+        return False, "not_found"
+
+    now = dt.datetime.now(dt.UTC)
+    current_status = cast(str, record.status)
+
+    # Terminal states are immutable
+    if _is_terminal(current_status):
+        return False, f"already_{current_status.lower()}"
+
+    # Already requested
+    if current_status == "CANCEL_REQUESTED":
+        return False, "already_cancel_requested"
+
+    # Immediate cancellation for CREATED/QUEUED (before worker claim)
+    if current_status in ("CREATED", "QUEUED"):
+        record.status = "CANCELLED"  # type: ignore[assignment]
+        record.cancellation_reason = reason or "user requested"  # type: ignore[assignment]
+        record.cancelled_at = now  # type: ignore[assignment]
+        record.updated_at = now  # type: ignore[assignment]
+        return True, "cancelled"
+
+    # RUNNING -> CANCEL_REQUESTED (worker will observe and complete cancellation)
+    if current_status == "RUNNING":
+        record.status = "CANCEL_REQUESTED"  # type: ignore[assignment]
+        record.cancellation_reason = reason or "user requested"  # type: ignore[assignment]
+        record.updated_at = now  # type: ignore[assignment]
+        return True, "cancel_requested"
+
+    return False, f"unexpected_status_{current_status.lower()}"
+
+
+def mark_cancelled(
+    session: Session,
+    experiment_id: str,
+    reason: str = "",
+) -> None:
+    """Mark an experiment as CANCELLED (called by worker after runner stops)."""
+    now = dt.datetime.now(dt.UTC)
+    record = get_experiment(session, experiment_id)
+    if record is None:
+        return
+    # Only update if not already in a terminal state (atomic race protection)
+    if not _is_terminal(record.status):
+        record.status = "CANCELLED"  # type: ignore[assignment]
+        existing_reason = (
+            cast(str, record.cancellation_reason) if record.cancellation_reason else ""
+        )
+        record.cancellation_reason = reason or existing_reason or "worker cancelled"  # type: ignore[assignment]
+        record.cancelled_at = now  # type: ignore[assignment]
+        record.updated_at = now  # type: ignore[assignment]
+
+
+def mark_run_cancelled(
+    session: Session,
+    run_id: str,
+    reason: str = "",
+) -> None:
+    """Mark a run as CANCELLED (called by worker after runner stops)."""
+    now = dt.datetime.now(dt.UTC)
+    run_record = session.get(RunRecord, run_id)
+    if run_record is None:
+        return
+    if not _is_terminal(run_record.status):
+        run_record.status = "CANCELLED"  # type: ignore[assignment]
+        run_record.cancellation_reason = reason or "worker cancelled"  # type: ignore[assignment]
+        run_record.cancelled_at = now  # type: ignore[assignment]
+        run_record.completed_at = now  # type: ignore[assignment]
+
+
+def check_cancel_requested(session: Session, experiment_id: str) -> bool:
+    """Check if an experiment has a pending cancellation request.
+
+    Used by the worker to poll for cancellation during execution.
+    Returns True if status is CANCEL_REQUESTED.
+    """
+    record = get_experiment(session, experiment_id)
+    return record is not None and cast(str, record.status) == "CANCEL_REQUESTED"
 
 
 def get_runs(session: Session, experiment_id: str) -> list[RunRecord]:
@@ -103,3 +209,10 @@ def get_runs(session: Session, experiment_id: str) -> list[RunRecord]:
         .scalars()
         .all()
     )
+
+
+# Keep backward compatibility
+def cancel_experiment(session: Session, experiment_id: str) -> bool:
+    """Legacy cancel: returns True if cancellation was applied."""
+    success, _message = request_cancel(session, experiment_id)
+    return success

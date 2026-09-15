@@ -50,6 +50,8 @@ class ExperimentResult:
     runs: list[RunResult]
     environment: dict[str, str] = field(default_factory=dict)
     events: list[Event] = field(default_factory=list)
+    cancelled: bool = False
+    cancellation_reason: str = ""
 
     @property
     def experiment_id(self) -> str:

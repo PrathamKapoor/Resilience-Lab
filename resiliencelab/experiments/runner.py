@@ -8,6 +8,7 @@ from typing import Any
 
 from resiliencelab.analysis.recovery import detect_recovery
 from resiliencelab.core.builders import build_fault_spec, build_policy
+from resiliencelab.core.cancellation import CancellationToken, CancelledError
 from resiliencelab.core.clock import Clock
 from resiliencelab.core.policies import PolicyResolver
 from resiliencelab.core.schema import ExperimentSpec, SeedStrategy, ServiceSpec
@@ -44,13 +45,23 @@ class ExperimentRunner:
     def __init__(self) -> None:
         pass
 
-    def run(self, spec: ExperimentSpec) -> ExperimentResult:
-        return asyncio.run(self.run_async(spec))
+    def run(
+        self,
+        spec: ExperimentSpec,
+        cancellation_token: CancellationToken | None = None,
+    ) -> ExperimentResult:
+        return asyncio.run(self.run_async(spec, cancellation_token))
 
-    async def run_async(self, spec: ExperimentSpec) -> ExperimentResult:
+    async def run_async(
+        self,
+        spec: ExperimentSpec,
+        cancellation_token: CancellationToken | None = None,
+    ) -> ExperimentResult:
         seeds = self._seeds(spec)
         policy_name = build_policy(spec.policy).name
         lifecycle = EventEmitter(spec.id, "experiment", clock=Clock().now)
+
+        runs: list[RunResult] = []
         lifecycle.emit(
             EventType.EXPERIMENT_STARTED,
             metadata={
@@ -59,10 +70,36 @@ class ExperimentRunner:
                 "policy": policy_name,
             },
         )
-        runs: list[RunResult] = []
         try:
+            # Check for pre-start cancellation
+            if cancellation_token is not None:
+                cancellation_token.raise_if_cancelled()
+
             for index, seed in enumerate(seeds):
-                runs.append(await self._run_once(spec, seed, index))
+                # Check cancellation between repetitions
+                if cancellation_token is not None:
+                    cancellation_token.raise_if_cancelled()
+                runs.append(await self._run_once(spec, seed, index, cancellation_token))
+        except CancelledError:
+            # Cooperative cancellation: emit event and return partial result
+            lifecycle.emit(
+                EventType.EXPERIMENT_CANCELLED,
+                reason=cancellation_token.reason if cancellation_token else "cancelled",
+                completed_runs=len(runs),
+                total_runs=len(seeds),
+            )
+            return ExperimentResult(
+                experiment=spec,
+                policy_name=policy_name,
+                config_hash=hash_config(spec),
+                runs=runs,
+                environment=capture_environment(),
+                events=lifecycle.events(),
+                cancelled=True,
+                cancellation_reason=(
+                    cancellation_token.reason if cancellation_token else "cancelled"
+                ),
+            )
         except Exception as exc:  # noqa: BLE001
             lifecycle.emit(EventType.EXPERIMENT_FAILED, reason=str(exc))
             raise
@@ -107,7 +144,13 @@ class ExperimentRunner:
                 routed.setdefault("payment_service", []).append(FaultInjector(fault_spec))
         return routed
 
-    async def _run_once(self, spec: ExperimentSpec, seed: int, index: int) -> RunResult:
+    async def _run_once(
+        self,
+        spec: ExperimentSpec,
+        seed: int,
+        index: int,
+        cancellation_token: CancellationToken | None = None,
+    ) -> RunResult:
         run_id = f"{spec.id}/run-{index}"
         clock = Clock()
         metrics = MetricsCollector(spec.id, run_id, seed, clock=clock.now)
@@ -212,7 +255,7 @@ class ExperimentRunner:
         async def send(request_id: int) -> ServiceResponse:
             return await sut.handle(request_id, seed)
 
-        workload = WorkloadGenerator(spec.workload, send, metrics, seed, clock)
+        workload = WorkloadGenerator(spec.workload, send, metrics, seed, clock, cancellation_token)
         await workload.run()
 
         records = metrics.records()
