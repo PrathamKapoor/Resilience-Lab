@@ -57,6 +57,9 @@ class EventType(str, Enum):
     FAULT_INJECTED = "FaultInjected"
     FAULT_RECOVERED = "FaultRecovered"
 
+    EXPERIMENT_CANCELLATION_REQUESTED = "ExperimentCancellationRequested"
+    EXPERIMENT_CANCELLED = "ExperimentCancelled"
+
 
 @dataclass(frozen=True)
 class Event:

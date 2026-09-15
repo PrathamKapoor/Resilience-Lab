@@ -138,6 +138,11 @@ def requeue_stuck_jobs(r: redis.Redis, max_age_seconds: int = 600) -> int:
         if data is None:
             stuck.append(job_id)
             continue
+        # Skip cancelled jobs — don't requeue them
+        job_status = r.hget(_job_prefix + job_id, "status")
+        if job_status == "CANCELLED":
+            r.lrem(_processing_key, 1, job_id)
+            continue
         payload = JobPayload.from_json(data)  # type: ignore[arg-type]
         if payload.claimed_at and (time.time() - payload.claimed_at) > max_age_seconds:
             stuck.append(job_id)

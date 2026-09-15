@@ -17,9 +17,6 @@ from resiliencelab.controlplane.queue import (
     get_redis_client,
 )
 from resiliencelab.controlplane.repositories import (
-    cancel_experiment as db_cancel_experiment,
-)
-from resiliencelab.controlplane.repositories import (
     create_experiment as db_create_experiment,
 )
 from resiliencelab.controlplane.repositories import (
@@ -32,8 +29,10 @@ from resiliencelab.controlplane.repositories import (
     list_experiments as db_list_experiments,
 )
 from resiliencelab.controlplane.repositories import (
+    request_cancel,
     update_experiment_status,
 )
+from resiliencelab.core.cancellation import CancellationToken
 from resiliencelab.core.config import ConfigValidationError, dump_yaml, parse_experiment
 from resiliencelab.core.schema import ExperimentSpec
 from resiliencelab.experiments.registry import ExperimentRegistry
@@ -44,6 +43,10 @@ from resiliencelab.experiments.runner import ExperimentRunner
 
 class ExperimentCreate(BaseModel):
     config: dict[str, Any]
+
+
+class CancelRequest(BaseModel):
+    reason: str = ""
 
 
 def _is_server_mode() -> bool:
@@ -57,22 +60,58 @@ class LocalRuntime:
         self.registry = ExperimentRegistry()
         self.runner = ExperimentRunner()
         self.jobs: dict[str, dict[str, Any]] = {}
+        self._cancellation_tokens: dict[str, CancellationToken] = {}
 
     async def submit(self, spec: ExperimentSpec) -> str:
         self.registry.register_spec(spec)
         job_id = spec.id
         self.jobs[job_id] = {"status": "running", "result": None, "error": None}
-        asyncio.create_task(self.execute_and_store(spec))
+        token = CancellationToken()
+        self._cancellation_tokens[job_id] = token
+        asyncio.create_task(self.execute_and_store(spec, token))
         return job_id
 
-    async def execute_and_store(self, spec: ExperimentSpec) -> None:
+    async def execute_and_store(
+        self,
+        spec: ExperimentSpec,
+        token: CancellationToken | None = None,
+    ) -> None:
         try:
-            result = await self.runner.run_async(spec)
+            result = await self.runner.run_async(spec, cancellation_token=token)
         except Exception as exc:  # noqa: BLE001
             self.jobs[spec.id] = {"status": "failed", "result": None, "error": str(exc)}
             return
-        self.registry.register_result(result)
-        self.jobs[spec.id] = {"status": "completed", "result": result, "error": None}
+        if result.cancelled:
+            self.jobs[spec.id] = {
+                "status": "cancelled",
+                "result": result,
+                "error": result.cancellation_reason,
+            }
+        else:
+            self.registry.register_result(result)
+            self.jobs[spec.id] = {"status": "completed", "result": result, "error": None}
+
+    def request_cancel(self, experiment_id: str, reason: str = "") -> tuple[bool, str]:
+        """Request cancellation of a running experiment.
+
+        Returns (success, status_message).
+        """
+        job = self.jobs.get(experiment_id)
+        if job is None:
+            # Check if experiment exists in registry but hasn't been run
+            if self.registry.get_spec(experiment_id) is not None:
+                return False, "not_started"
+            return False, "not_found"
+        if job["status"] in ("completed", "failed", "cancelled"):
+            return False, f"already_{job['status']}"
+        if job["status"] == "cancel_requested":
+            return False, "already_cancel_requested"
+
+        token = self._cancellation_tokens.get(experiment_id)
+        if token is not None:
+            token.request(reason=reason or "user requested")
+        self.jobs[experiment_id]["status"] = "cancel_requested"
+        return True, "cancel_requested"
 
     def job(self, experiment_id: str) -> dict[str, Any]:
         return self.jobs.get(experiment_id, {"status": "unknown", "result": None, "error": None})
@@ -87,7 +126,7 @@ def _result_or_404(runtime: LocalRuntime, experiment_id: str) -> ExperimentResul
 
 def create_app(runtime: LocalRuntime | None = None, server_mode: bool | None = None) -> FastAPI:
     use_server = server_mode if server_mode is not None else _is_server_mode()
-    app = FastAPI(title="ResilienceLab API", version="0.2.0")
+    app = FastAPI(title="ResilienceLab API", version="0.3.0")
 
     if use_server:
         try:
@@ -215,6 +254,10 @@ def _register_server_routes(v1: APIRouter) -> None:
                     "config_hash": record.config_hash,
                     "artifact_path": record.artifact_path,
                     "error_message": record.error_message,
+                    "cancellation_reason": record.cancellation_reason,
+                    "cancelled_at": record.cancelled_at.isoformat()
+                    if record.cancelled_at
+                    else None,
                     "created_at": record.created_at.isoformat() if record.created_at else None,
                     "updated_at": record.updated_at.isoformat() if record.updated_at else None,
                 }
@@ -238,6 +281,8 @@ def _register_server_routes(v1: APIRouter) -> None:
                         "status": run.status,
                         "artifact_path": run.artifact_path,
                         "error_message": run.error_message,
+                        "cancellation_reason": run.cancellation_reason,
+                        "cancelled_at": run.cancelled_at.isoformat() if run.cancelled_at else None,
                         "started_at": run.started_at.isoformat() if run.started_at else None,
                         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
                     }
@@ -280,16 +325,29 @@ def _register_server_routes(v1: APIRouter) -> None:
             db.close()
 
     @v1.post("/experiments/{experiment_id}/cancel")
-    async def cancel_experiment(experiment_id: str) -> dict[str, Any]:
+    async def cancel_experiment(
+        experiment_id: str,
+        payload: CancelRequest | None = None,
+    ) -> dict[str, Any]:
         from resiliencelab.controlplane.database import create_session
 
         db = create_session()
         try:
-            cancelled = db_cancel_experiment(db, experiment_id)
-            if not cancelled:
-                raise HTTPException(status_code=404, detail=f"unknown experiment {experiment_id}")
+            reason = payload.reason if payload else ""
+            success, status_msg = request_cancel(db, experiment_id, reason=reason)
+            if not success:
+                if status_msg == "not_found":
+                    raise HTTPException(
+                        status_code=404, detail=f"unknown experiment {experiment_id}"
+                    )
+                # Terminal states and already-cancel-requested are idempotent
+                return {
+                    "id": experiment_id,
+                    "status": status_msg,
+                    "message": f"experiment is already {status_msg}",
+                }
             db.commit()
-            return {"id": experiment_id, "status": "cancelled"}
+            return {"id": experiment_id, "status": status_msg}
         except HTTPException:
             raise
         except Exception:
@@ -312,6 +370,7 @@ def _register_server_routes(v1: APIRouter) -> None:
                 "id": experiment_id,
                 "status": record.status,
                 "error": record.error_message,
+                "cancellation_reason": record.cancellation_reason,
                 "runs": [{"run_id": run.run_id, "status": run.status} for run in runs],
             }
         finally:
@@ -411,10 +470,9 @@ def _register_local_routes(v1: APIRouter, runtime: LocalRuntime | None) -> None:
     @v1.get("/experiments/{experiment_id}")
     async def get_experiment(experiment_id: str) -> dict[str, Any]:
         spec = runtime.registry.get_spec(experiment_id)
-        if spec is None:
-            result = runtime.registry.get_result(experiment_id)
-            if result is not None:
-                spec = result.experiment
+        result = runtime.registry.get_result(experiment_id)
+        if spec is None and result is not None:
+            spec = result.experiment
         if spec is None:
             raise HTTPException(status_code=404, detail=f"unknown experiment {experiment_id}")
         return {"experiment": spec.model_dump(mode="json")}
@@ -431,12 +489,27 @@ def _register_local_routes(v1: APIRouter, runtime: LocalRuntime | None) -> None:
             raise HTTPException(status_code=404, detail=f"unknown experiment {experiment_id}")
         runtime.registry.register_spec(spec)
         runtime.jobs[experiment_id] = {"status": "running", "result": None, "error": None}
-        background_tasks.add_task(runtime.execute_and_store, spec)
+        token = CancellationToken()
+        runtime._cancellation_tokens[experiment_id] = token
+        background_tasks.add_task(runtime.execute_and_store, spec, token)
         return {"id": experiment_id, "status": "running"}
 
     @v1.post("/experiments/{experiment_id}/cancel")
-    async def cancel_experiment(experiment_id: str) -> dict[str, Any]:
-        raise HTTPException(status_code=501, detail="cancellation not yet implemented")
+    async def cancel_experiment(
+        experiment_id: str,
+        payload: CancelRequest | None = None,
+    ) -> dict[str, Any]:
+        reason = payload.reason if payload else ""
+        success, status_msg = runtime.request_cancel(experiment_id, reason=reason)
+        if not success:
+            if status_msg == "not_found":
+                raise HTTPException(status_code=404, detail=f"unknown experiment {experiment_id}")
+            return {
+                "id": experiment_id,
+                "status": status_msg,
+                "message": f"experiment is already {status_msg}",
+            }
+        return {"id": experiment_id, "status": status_msg}
 
     @v1.get("/experiments/{experiment_id}/status")
     async def experiment_status(experiment_id: str) -> dict[str, Any]:

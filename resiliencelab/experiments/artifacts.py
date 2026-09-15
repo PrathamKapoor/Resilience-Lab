@@ -51,6 +51,9 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
         "service_metrics_per_run": result.service_metrics_per_run(),
         "seeds": result.seeds(),
         "repetitions": len(result.runs),
+        "requested_repetitions": result.experiment.repetitions.count,
+        "cancelled": result.cancelled,
+        "cancellation_reason": result.cancellation_reason,
     }
     record("experiment.json", json.dumps(summary, indent=2).encode("utf-8"))
 
@@ -96,6 +99,10 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
         "events_hash": events_hash,
         "event_schema_version": EVENT_SCHEMA_VERSION,
         "event_count": len(all_events),
+        "cancelled": result.cancelled,
+        "cancellation_reason": result.cancellation_reason,
+        "requested_repetitions": result.experiment.repetitions.count,
+        "completed_repetitions": len(result.runs),
         "files": manifest_files,
     }
     _write_json(base / "manifest.json", manifest)

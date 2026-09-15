@@ -481,13 +481,28 @@ def server_run(
 @server_app.command("cancel")
 def server_cancel(
     experiment_id: Annotated[str, typer.Argument()],
+    reason: Annotated[str, typer.Option(help="Cancellation reason")] = "",
 ) -> None:
     client = _server_client()
-    response = client.post(f"/api/v1/experiments/{experiment_id}/cancel")
+    payload: dict[str, Any] = {}
+    if reason:
+        payload["reason"] = reason
+    response = client.post(f"/api/v1/experiments/{experiment_id}/cancel", json=payload or None)
     if response.status_code == 404:
         _err(f"experiment `{experiment_id}` not found")
     data = response.json()
-    console.print(f"[yellow]Cancelled[/yellow] experiment `{data['id']}`")
+    status = data.get("status", "unknown")
+    if status == "cancel_requested":
+        console.print(
+            f"[yellow]Cancellation requested[/yellow] for `{experiment_id}`. "
+            "Worker will stop at the next checkpoint."
+        )
+    elif status == "cancelled":
+        console.print(f"[yellow]Cancelled[/yellow] experiment `{experiment_id}`")
+    elif "already" in status:
+        console.print(f"[dim]Already {status}[/dim] for `{experiment_id}`")
+    else:
+        console.print(f"[yellow]{status}[/yellow] experiment `{experiment_id}`")
 
 
 @server_app.command("health")

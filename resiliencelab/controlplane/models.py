@@ -38,6 +38,8 @@ class ExperimentRecord(Base):
     status = Column(String(32), nullable=False, default="CREATED", index=True)
     artifact_path = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
+    cancellation_reason = Column(Text, nullable=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow)
 
@@ -64,6 +66,8 @@ class RunRecord(Base):
     status = Column(String(32), nullable=False, default="QUEUED", index=True)
     artifact_path = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
+    cancellation_reason = Column(Text, nullable=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
