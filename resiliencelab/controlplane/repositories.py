@@ -42,6 +42,7 @@ def create_experiment(
     config_yaml: str,
     config_hash: str,
     status: str = "CREATED",
+    owner_id: str | None = None,
 ) -> ExperimentRecord:
     record = ExperimentRecord(
         experiment_id=experiment_id,
@@ -51,6 +52,7 @@ def create_experiment(
         config_yaml=config_yaml,
         config_hash=config_hash,
         status=status,
+        owner_id=owner_id,
     )
     session.add(record)
     session.flush()
@@ -71,14 +73,33 @@ def list_experiments(
     session: Session,
     *,
     status: str | None = None,
+    owner_id: str | None = None,
     offset: int = 0,
     limit: int = 100,
 ) -> list[ExperimentRecord]:
     q = select(ExperimentRecord).order_by(ExperimentRecord.created_at.desc())
     if status:
         q = q.where(ExperimentRecord.status == status)
+    if owner_id:
+        q = q.where(ExperimentRecord.owner_id == owner_id)
     q = q.offset(offset).limit(limit)
     return list(session.execute(q).scalars().all())
+
+
+def count_experiments(
+    session: Session,
+    *,
+    status: str | None = None,
+    owner_id: str | None = None,
+) -> int:
+    from sqlalchemy import func
+
+    q = select(func.count()).select_from(ExperimentRecord)
+    if status:
+        q = q.where(ExperimentRecord.status == status)
+    if owner_id:
+        q = q.where(ExperimentRecord.owner_id == owner_id)
+    return session.execute(q).scalar_one()
 
 
 def update_experiment_status(

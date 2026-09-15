@@ -34,7 +34,8 @@ def test_create_and_get_experiment() -> None:
     assert response.status_code == 201
     assert response.json()["id"] == "exp_api"
     listed = client.get("/api/v1/experiments").json()
-    assert "exp_api" in listed["experiments"]
+    assert any(e["id"] == "exp_api" for e in listed["experiments"])
+    assert "pagination" in listed
     fetched = client.get("/api/v1/experiments/exp_api").json()
     assert fetched["experiment"]["id"] == "exp_api"
 

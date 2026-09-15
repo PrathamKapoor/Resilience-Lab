@@ -38,6 +38,7 @@ class ExperimentRecord(Base):
     status = Column(String(32), nullable=False, default="CREATED", index=True)
     artifact_path = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
+    owner_id = Column(String(256), nullable=True, index=True)
     cancellation_reason = Column(Text, nullable=True)
     cancelled_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
