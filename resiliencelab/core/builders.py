@@ -17,7 +17,7 @@ from resiliencelab.resilience.circuit_breaker import CircuitBreaker, CircuitBrea
 from resiliencelab.resilience.concurrency import ConcurrencyLimitConfig, ConcurrencyLimiter
 from resiliencelab.resilience.jitter import Jitter
 from resiliencelab.resilience.policy import ResiliencePolicy
-from resiliencelab.resilience.retry import Retry, RetryConfig
+from resiliencelab.resilience.retry import Retry, RetryBudget, RetryConfig
 from resiliencelab.resilience.timeout import Timeout
 
 
@@ -37,13 +37,20 @@ def build_jitter(spec: BackoffSpec) -> Jitter:
 def build_retry(retry_spec: RetrySpec | None, backoff_spec: BackoffSpec) -> Retry | None:
     if retry_spec is None:
         return None
+    budget = None
+    if retry_spec.budget_max_retries is not None:
+        budget = RetryBudget(
+            max_retries=retry_spec.budget_max_retries,
+            window=retry_spec.budget_window,
+        )
     return Retry(
         RetryConfig(
             max_attempts=retry_spec.max_attempts,
             retryable_statuses=frozenset(retry_spec.retryable_statuses),
             backoff=build_backoff(backoff_spec),
             jitter=build_jitter(backoff_spec),
-        )
+        ),
+        budget=budget,
     )
 
 
