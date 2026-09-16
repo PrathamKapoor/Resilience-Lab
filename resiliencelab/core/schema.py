@@ -186,9 +186,18 @@ class WorkloadSpec(BaseModel):
     warmup: Duration = Field(default=0.0, ge=0)
     cooldown: Duration = Field(default=0.0, ge=0)
     distribution: ArrivalDistribution = ArrivalDistribution.POISSON
-    payload_size: int = Field(default=64, ge=0)
+    payload_size: int = Field(
+        default=64,
+        ge=0,
+        description=(
+            "Request payload size in bytes. Currently a schema-only field with no runtime "
+            "impact. The simulator models in-process function calls, not network transfer, "
+            "so payload size does not affect latency or throughput. If payload-proportional "
+            "processing time is needed, extend the processing model explicitly."
+        ),
+    )
     burstiness: float = Field(default=1.0, gt=0)
-    endpoint_mix: list[str] = Field(default_factory=lambda: ["/"])
+    endpoint_mix: list[str] = Field(default_factory=lambda: ["/"], min_length=1)
     burst_size: int = Field(default=10, ge=1)
     burst_interval: Duration = Field(default=1.0, gt=0)
     period: Duration = Field(default=1.0, gt=0)

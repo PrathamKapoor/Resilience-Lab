@@ -16,6 +16,8 @@ from resiliencelab.events import EventType
 from resiliencelab.metrics.collector import MetricsCollector
 from resiliencelab.workloads.arrivals import ArrivalModel
 
+ENDPOINT_MIX_RNG_SALT = 0x4550  # "EP"
+
 
 class ResponseLike(Protocol):
     @property
@@ -94,8 +96,22 @@ class WorkloadGenerator:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    def _select_endpoint(self, request_id: int) -> str:
+        """Deterministically select an endpoint from the endpoint_mix.
+
+        Uses uniform distribution across all configured endpoints. The selection
+        is deterministic given (seed, request_id, endpoint_mix).
+        """
+        endpoints = self.spec.endpoint_mix
+        if len(endpoints) == 1:
+            return endpoints[0]
+        rng = generator_for(self.seed, request_id, ENDPOINT_MIX_RNG_SALT)
+        idx = int(rng.integers(0, len(endpoints)))
+        return endpoints[idx]
+
     async def _issue(self, request_id: int) -> None:
-        self.metrics.emit(EventType.REQUEST_STARTED, request_id=request_id, operation="/")
+        operation = self._select_endpoint(request_id)
+        self.metrics.emit(EventType.REQUEST_STARTED, request_id=request_id, operation=operation)
         started = time.perf_counter()
         try:
             response = await self.send(request_id)
@@ -114,12 +130,13 @@ class WorkloadGenerator:
             success=success,
             timeout=timeout,
             latency=latency,
+            operation=operation,
         )
         if success:
             self.metrics.emit(
                 EventType.REQUEST_COMPLETED,
                 request_id=request_id,
-                operation="/",
+                operation=operation,
                 status=status,
                 metadata={"latency": latency},
             )
@@ -127,7 +144,7 @@ class WorkloadGenerator:
             self.metrics.emit(
                 EventType.REQUEST_FAILED,
                 request_id=request_id,
-                operation="/",
+                operation=operation,
                 status=status,
                 reason="timeout" if timeout else "failed",
                 metadata={"latency": latency, "timeout": timeout},

@@ -208,3 +208,32 @@ def summarize_downstream(records: list[Record]) -> dict[str, float]:
         "latency_mean": mean(lat) if lat else 0.0,
         "latency_p99": _pct(sorted(lat), 0.99) if lat else 0.0,
     }
+
+
+def summarize_by_endpoint(records: list[Record]) -> dict[str, dict[str, float]]:
+    """Summarize request metrics grouped by operation (endpoint).
+
+    Returns a dict keyed by endpoint path, each containing:
+        total, successful, failed, availability, latency_mean, latency_p95
+    """
+    reqs = requests(records)
+    if not reqs:
+        return {}
+    groups: dict[str, list[Record]] = {}
+    for r in reqs:
+        op = r.get("operation", "/")
+        groups.setdefault(op, []).append(r)
+    result: dict[str, dict[str, float]] = {}
+    for op, group in sorted(groups.items()):
+        total = len(group)
+        successful = sum(1 for r in group if r.get("success"))
+        lats = [float(r["latency"]) for r in group if r.get("latency") is not None]
+        result[op] = {
+            "total": float(total),
+            "successful": float(successful),
+            "failed": float(total - successful),
+            "availability": successful / total if total else 0.0,
+            "latency_mean": mean(lats) if lats else 0.0,
+            "latency_p95": _pct(sorted(lats), 0.95) if lats else 0.0,
+        }
+    return result
