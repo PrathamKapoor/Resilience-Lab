@@ -71,8 +71,12 @@ def run_worker(
     r = get_redis_client(redis_url)
     init_session_factory(db_url)
 
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
+    # Signal handling only works in the main thread
+    try:
+        signal.signal(signal.SIGINT, _handle_signal)
+        signal.signal(signal.SIGTERM, _handle_signal)
+    except ValueError:
+        pass
 
     jobs_processed = 0
     runner = ExperimentRunner()
@@ -198,15 +202,14 @@ def _process_job(
             artifact_dir = f"results/{payload.experiment_id}/runs/{payload.run_id}"
             write_artifacts(result, Path(artifact_dir))
 
-            with session.begin():
-                run_record = session.get(RunRecord, payload.run_id)
-                if run_record and run_record.status not in ("COMPLETED", "FAILED", "CANCELLED"):
-                    run_record.status = "CANCELLED"  # type: ignore[assignment]
-                    run_record.completed_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
-                    run_record.artifact_path = artifact_dir  # type: ignore[assignment]
-                    reason_str: str = result.cancellation_reason or "worker cancelled"
-                    run_record.cancellation_reason = reason_str  # type: ignore[assignment]
-                    run_record.cancelled_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
+            run_record = session.get(RunRecord, payload.run_id)
+            if run_record and run_record.status not in ("COMPLETED", "FAILED", "CANCELLED"):
+                run_record.status = "CANCELLED"  # type: ignore[assignment]
+                run_record.completed_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
+                run_record.artifact_path = artifact_dir  # type: ignore[assignment]
+                reason_str: str = result.cancellation_reason or "worker cancelled"
+                run_record.cancellation_reason = reason_str  # type: ignore[assignment]
+                run_record.cancelled_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
 
             mark_cancelled(session, payload.experiment_id, result.cancellation_reason)
             session.commit()
@@ -218,25 +221,25 @@ def _process_job(
         artifact_dir = f"results/{payload.experiment_id}/runs/{payload.run_id}"
         write_artifacts(result, Path(artifact_dir))
 
-        with session.begin():
-            run_record = session.get(RunRecord, payload.run_id)
-            if run_record and run_record.status not in ("COMPLETED", "FAILED", "CANCELLED"):
-                run_record.status = "COMPLETED"  # type: ignore[assignment]
-                run_record.completed_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
-                run_record.artifact_path = artifact_dir  # type: ignore[assignment]
+        run_record = session.get(RunRecord, payload.run_id)
+        if run_record and run_record.status not in ("COMPLETED", "FAILED", "CANCELLED"):
+            run_record.status = "COMPLETED"  # type: ignore[assignment]
+            run_record.completed_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
+            run_record.artifact_path = artifact_dir  # type: ignore[assignment]
 
-            all_runs = (
-                session.execute(
-                    select(RunRecord).where(RunRecord.experiment_id == payload.experiment_id)
-                )
-                .scalars()
-                .all()
+        all_runs = (
+            session.execute(
+                select(RunRecord).where(RunRecord.experiment_id == payload.experiment_id)
             )
-            if all(r.status == "COMPLETED" for r in all_runs):
-                update_experiment_status(
-                    session, payload.experiment_id, "COMPLETED", artifact_path=artifact_dir
-                )
+            .scalars()
+            .all()
+        )
+        if all(r.status == "COMPLETED" for r in all_runs):
+            update_experiment_status(
+                session, payload.experiment_id, "COMPLETED", artifact_path=artifact_dir
+            )
 
+        session.commit()
         complete_job(r, payload.run_id, "COMPLETED", artifact_dir)
         logger.info("Completed job %s", payload.run_id)
 
@@ -245,14 +248,12 @@ def _process_job(
         session.rollback()
         try:
             artifact_dir = f"results/{payload.experiment_id}/runs/{payload.run_id}"
-            # Try to write partial artifacts if we have partial results
-            with session.begin():
-                run_record = session.get(RunRecord, payload.run_id)
-                if run_record and run_record.status not in ("COMPLETED", "FAILED", "CANCELLED"):
-                    run_record.status = "CANCELLED"  # type: ignore[assignment]
-                    run_record.completed_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
-                    run_record.cancellation_reason = str(exc)  # type: ignore[assignment]
-                    run_record.cancelled_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
+            run_record = session.get(RunRecord, payload.run_id)
+            if run_record and run_record.status not in ("COMPLETED", "FAILED", "CANCELLED"):
+                run_record.status = "CANCELLED"  # type: ignore[assignment]
+                run_record.completed_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
+                run_record.cancellation_reason = str(exc)  # type: ignore[assignment]
+                run_record.cancelled_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
             mark_cancelled(session, payload.experiment_id, str(exc))
             session.commit()
             complete_job(r, payload.run_id, "CANCELLED")
@@ -265,15 +266,16 @@ def _process_job(
         logger.exception("Job %s failed: %s", payload.run_id, exc)
         session.rollback()
         try:
-            with session.begin():
-                run_record = session.get(RunRecord, payload.run_id)
-                if run_record and run_record.status not in ("COMPLETED", "FAILED", "CANCELLED"):
-                    run_record.status = "FAILED"  # type: ignore[assignment]
-                    run_record.error_message = str(exc)[:2000]  # type: ignore[assignment]
-                    run_record.completed_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
+            run_record = session.get(RunRecord, payload.run_id)
+            if run_record and run_record.status not in ("COMPLETED", "FAILED", "CANCELLED"):
+                run_record.status = "FAILED"  # type: ignore[assignment]
+                run_record.error_message = str(exc)[:2000]  # type: ignore[assignment]
+                run_record.completed_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
+            session.commit()
             complete_job(r, payload.run_id, "FAILED")
         except Exception:
             logger.exception("Failed to record failure for %s", payload.run_id)
+            session.rollback()
         session.close()
 
     finally:

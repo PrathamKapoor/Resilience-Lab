@@ -23,6 +23,14 @@ def get_engine(url: str | None = None) -> Engine:
     if not resolved.startswith("sqlite"):
         kwargs["pool_size"] = 5
         kwargs["max_overflow"] = 10
+    # Use psycopg3 driver if psycopg2 is not available
+    if resolved.startswith("postgresql://"):
+        try:
+            import psycopg  # noqa: F401
+
+            resolved = resolved.replace("postgresql://", "postgresql+psycopg://", 1)
+        except ImportError:
+            pass
     engine = create_engine(resolved, **kwargs)
     return engine
 
