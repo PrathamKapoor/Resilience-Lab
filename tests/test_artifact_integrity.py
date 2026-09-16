@@ -334,7 +334,7 @@ class TestPartialArtifacts:
                     seed=1 + i,
                     summary=DUMMY_SUMMARY,
                     downstream={},
-                recovery=RecoveryReport(),
+                    recovery=RecoveryReport(),
                     timeline=[],
                     record_count=10,
                     backoff_seconds=0.0,
