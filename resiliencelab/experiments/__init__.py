@@ -1,6 +1,6 @@
 """Experiment execution, provenance, registry, factorial generation, and result types."""
 
-from resiliencelab.experiments.artifacts import write_artifacts
+from resiliencelab.experiments.artifacts import verify_artifacts, write_artifacts
 from resiliencelab.experiments.factorial import CORE_FACTORS, generate_matrix
 from resiliencelab.experiments.provenance import (
     canonical_config,
@@ -27,4 +27,5 @@ __all__ = [
     "hash_config",
     "hash_records",
     "write_artifacts",
+    "verify_artifacts",
 ]
