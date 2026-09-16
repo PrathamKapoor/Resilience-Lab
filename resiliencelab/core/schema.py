@@ -227,6 +227,20 @@ class RetrySpec(BaseModel):
     enabled: bool = True
     max_attempts: int = Field(default=3, ge=1)
     retryable_statuses: set[int] = Field(default_factory=lambda: {429, 500, 502, 503, 504})
+    budget_max_retries: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Optional sliding-window retry budget. When set, limits the number of retries "
+            "within `budget_window` seconds across all calls through this service's policy. "
+            "None means unlimited retries (subject to max_attempts)."
+        ),
+    )
+    budget_window: float = Field(
+        default=10.0,
+        gt=0,
+        description="Sliding window duration in seconds for the retry budget.",
+    )
 
 
 class BackoffSpec(BaseModel):
@@ -254,7 +268,15 @@ class CircuitBreakerSpec(BaseModel):
 class TimeoutSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    connect: Duration | None = Field(default=None, gt=0)
+    connect: Duration | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Connection establishment timeout. Currently a schema-only field. The simulator "
+            "models in-process function calls, so there is no separate connection phase. "
+            "If connection-level timeout semantics are needed, extend PolicyExecutor._call()."
+        ),
+    )
     read: Duration | None = Field(default=None, gt=0)
     total: Duration | None = Field(default=None, gt=0)
 
