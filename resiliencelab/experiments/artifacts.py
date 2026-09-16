@@ -10,7 +10,7 @@ from resiliencelab.core.config import dump_yaml
 from resiliencelab.core.policies import PolicyResolver, service_names
 from resiliencelab.core.schema import POLICY_SCHEMA_VERSION
 from resiliencelab.events import EVENT_SCHEMA_VERSION
-from resiliencelab.experiments.provenance import hash_bytes, hash_records, hash_text
+from resiliencelab.experiments.provenance import hash_bytes, hash_file, hash_records, hash_text
 from resiliencelab.experiments.report import build_report
 from resiliencelab.experiments.result import ExperimentResult
 from resiliencelab.metrics.collector import Record
@@ -107,6 +107,70 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
     }
     _write_json(base / "manifest.json", manifest)
     return manifest
+
+
+def verify_artifacts(base_dir: Path) -> dict[str, Any]:
+    """Verify integrity of an artifact bundle against its manifest.
+
+    Returns a dict with:
+        - valid: bool — True only if every check passes
+        - errors: list[str] — human-readable error descriptions
+        - warnings: list[str] — non-fatal observations
+        - manifest: dict — the loaded manifest
+        - file_count: int — number of tracked files
+        - verified_files: int — number of files that passed hash check
+    """
+    base = Path(base_dir)
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    manifest_path = base / "manifest.json"
+    if not manifest_path.exists():
+        return {
+            "valid": False,
+            "errors": ["manifest.json not found"],
+            "warnings": [],
+            "manifest": None,
+            "file_count": 0,
+            "verified_files": 0,
+        }
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    tracked_files: dict[str, str] = manifest.get("files", {})
+
+    verified = 0
+    for rel_path, expected_hash in tracked_files.items():
+        file_path = base / rel_path
+        if not file_path.exists():
+            errors.append(f"missing file: {rel_path}")
+            continue
+        actual_hash = hash_file(str(file_path))
+        if actual_hash != expected_hash:
+            errors.append(
+                f"hash mismatch: {rel_path} expected={expected_hash} actual={actual_hash}"
+            )
+        else:
+            verified += 1
+
+    # Check for untracked files in key directories
+    for subdir in ("raw", "analysis", "report"):
+        dir_path = base / subdir
+        if not dir_path.exists():
+            continue
+        for f in dir_path.iterdir():
+            if f.is_file():
+                rel = f"{subdir}/{f.name}"
+                if rel not in tracked_files:
+                    warnings.append(f"untracked file: {rel}")
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "manifest": manifest,
+        "file_count": len(tracked_files),
+        "verified_files": verified,
+    }
 
 
 def _policy_provenance(result: ExperimentResult) -> dict[str, Any]:
