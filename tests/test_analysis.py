@@ -55,6 +55,39 @@ def test_recovery_detection() -> None:
     assert report.recovered_at is not None and report.recovered_at >= 15.0
 
 
+def test_recovery_never_degraded() -> None:
+    series = [(float(t), 100.0) for t in range(20)]
+    report = detect_recovery(series, baseline_window=5.0, availability_threshold=0.9)
+    assert not report.degraded
+    assert report.recovered_at is None
+
+
+def test_recovery_never_recovers() -> None:
+    healthy = [(float(t), 100.0) for t in range(5)]
+    degraded = [(float(t), 10.0) for t in range(5, 25)]
+    report = detect_recovery(
+        healthy + degraded,
+        baseline_window=4.0,
+        availability_threshold=0.9,
+        stability_window=2.0,
+    )
+    assert report.degraded
+    assert report.recovered_at is None
+    assert report.time_to_recovery == float("inf")
+
+
+def test_recovery_insufficient_data() -> None:
+    report = detect_recovery([(0.0, 100.0), (1.0, 90.0)])
+    assert not report.degraded
+
+
+def test_recovery_zero_baseline() -> None:
+    series = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)]
+    report = detect_recovery(series, baseline_window=5.0)
+    assert not report.degraded
+    assert report.baseline_throughput == 0.0
+
+
 def test_score_exposes_weights_and_range() -> None:
     score = compute_score(
         availability=0.99,
