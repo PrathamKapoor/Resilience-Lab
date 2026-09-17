@@ -2,7 +2,7 @@ experiment:
   id: RL-BENCH-018
   name: retry-by-capacity-factorial
   version: 1
-  description: Full-factorial design quantifying when retries improve availability and when they amplify saturation. Base experiment for retry x capacity expansion.
+  description: Base configuration for factorial expansion quantifying when retries improve availability and when they amplify saturation. Base experiment for retry x capacity expansion.
 
 system:
   services:

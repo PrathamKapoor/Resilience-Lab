@@ -2,7 +2,7 @@ experiment:
   id: RL-BENCH-017
   name: policy-by-fault-factorial
   version: 1
-  description: Full-factorial design measuring policy main effects and policy x fault interactions. Replicates share deterministic seeds for paired comparison.
+  description: Base configuration for factorial expansion measuring policy main effects and policy x fault interactions. Replicates share deterministic seeds for paired comparison.
 
 system:
   services:

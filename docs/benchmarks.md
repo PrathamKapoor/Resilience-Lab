@@ -18,8 +18,8 @@
 | RL-BENCH-014 | per-service-breaker-isolation | Independent circuit breaker and retry state per dependency |
 | RL-BENCH-015 | retry-causal-trace | Failure → retry → outcome reconstructable from events |
 | RL-BENCH-016 | saturation-recovery-trace | Queueing/saturation/rejection/recovery observable as events |
-| RL-BENCH-017 | policy-by-fault-factorial | Full-factorial design measuring policy main effects and policy x fault interactions |
-| RL-BENCH-018 | retry-by-capacity-factorial | Full-factorial design quantifying when retries improve availability |
+| RL-BENCH-017 | policy-by-fault-factorial | Base configuration for factorial expansion measuring policy main effects and policy x fault interactions |
+| RL-BENCH-018 | retry-by-capacity-factorial | Base configuration for factorial expansion quantifying when retries improve availability |
 
 Run one with:
 
@@ -35,6 +35,17 @@ metrics, factorial factors, status) lives in
 `resiliencelab/experiments/catalog.py` and is derived mechanically from the
 YAMLs; `tests/test_benchmark_catalog.py` fails CI on duplicates, malformed
 YAMLs, count drift, or missing paper IDs.
+
+Benchmark discovery (`--benchmarks-dir`):
+
+- `reproduce --all` always targets the 18 standard benchmark names
+  (`RL-BENCH-001..018`).
+- Each name resolves in order: `--benchmarks-dir/<name>.yaml`, then
+  `./benchmarks/<name>.yaml` (repository CWD), then `configs/benchmarks/<name>.yaml`.
+- A partial `--benchmarks-dir` combined with a repository CWD can therefore still
+  resolve missing names from `./benchmarks/` and execute the real benchmark suite.
+  Use an isolated empty directory and explicit `--benchmarks` selection (library) or
+  verify `reproduction_manifest.json` to confirm which files were actually used.
 
 Notes:
 

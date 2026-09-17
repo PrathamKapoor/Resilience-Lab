@@ -79,7 +79,7 @@ Every statistical output includes `n` (repetition count) explicitly (`aggregate_
 
 Bootstrap resampling is reproducible: the same inputs with the same analysis configuration produce identical results. The bootstrap seed is fixed (`rng = np.random.default_rng(0)`) unless an external `rng` is explicitly passed.
 
-Two analyses of the same immutable artifact (`analysis_version`, same conditions, same seeds, same observations) must produce the same statistical result. This is verified by `test_bootstrap_is_deterministic_given_fixed_inputs` (`tests/test_statistics_anti_leakage.py`).
+Two analyses of the same manifest-hashed artifact (`analysis_version`, same conditions, same seeds, same observations) must produce the same statistical result. This is verified by `test_bootstrap_is_deterministic_given_fixed_inputs` (`tests/test_statistics_anti_leakage.py`).
 
 ## 6. Effect Sizes
 

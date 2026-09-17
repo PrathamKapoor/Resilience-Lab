@@ -6,7 +6,7 @@ platform for distributed services.
 ResilienceLab does not merely demonstrate that resilience mechanisms exist. It
 experimentally determines **when, why, and at what cost** different resilience
 mechanisms work — with controlled failures, reproducible workloads, repeated
-trials, uncertainty reporting, and hashed immutable artifacts.
+trials, uncertainty reporting, and manifest-hashed artifacts.
 
 The services are **controlled in-process simulations** (processing time,
 network delay, queueing, and capacity), not a production infrastructure. See
@@ -20,7 +20,7 @@ network delay, queueing, and capacity), not a production infrastructure. See
 - Standardized benchmark suite RL-BENCH-001..018 (see `docs/benchmarks.md`).
 - Reproducible workloads (open/closed loop, constant-rate, ramp) with warmup excluded from measurement. Seeded decisions are deterministic; wall-clock execution (counts, throughput, queueing, recovery) may vary — see `docs/reproducibility.md` layers A/B/C.
 - Metrics: availability, throughput, p50/p90/p95/p99/p99.9, error/timeout rates, recovery phases, retry depth, circuit transitions, and failure amplification (downstream calls per upstream request).
-- Analysis: bootstrap confidence intervals, effect sizes, cross-policy comparison, interaction effects, composite scoring with exposed weights.
+- Analysis: t-based confidence intervals by default (bootstrap available opt-in, not the default for artifacts/compare/matrix unless explicitly configured), effect sizes, cross-policy comparison, interaction effects, composite scoring with exposed weights.
 - Observability: a canonical, ordered, correlated event stream (requests, dependencies, retries, timeouts, breaker transitions, queue/capacity, network, faults) persisted as hashed artifacts with causal traces and filtering (see `docs/events.md`).
 - Interfaces: Typer CLI, versioned REST API with OpenAPI docs.
 - Reproducibility: every run stores configuration, environment, raw records, analysis, timeline, report, and a SHA256 manifest (integrity, not correctness); `reproduce` reruns from the stored configuration (`--all` for paper benchmarks, with a machine-readable manifest).

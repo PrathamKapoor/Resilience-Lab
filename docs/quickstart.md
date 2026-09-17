@@ -18,8 +18,8 @@ resiliencelab validate configs/example.yaml
 resiliencelab run configs/example.yaml --store ./results
 ```
 
-This writes an immutable artifact bundle under `./results/<experiment-id>/`
-(configuration, environment, raw records, analysis, timeline, report, manifest).
+This writes an integrity-verified artifact bundle under `./results/<experiment-id>/`
+(configuration, environment, raw records, analysis, timeline, report, content-integrity manifest).
 
 ## Read the report
 
