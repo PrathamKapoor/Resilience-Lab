@@ -279,10 +279,41 @@ def compare(
 
 @app.command()
 def reproduce(
-    experiment_id: Annotated[str, typer.Argument()],
+    experiment_id: Annotated[
+        str | None, typer.Argument(help="Experiment ID (omit with --all)")
+    ] = None,
     store: Annotated[str | None, typer.Option()] = None,
     output: Annotated[str | None, typer.Option(help="Store reproduction under new id")] = None,
+    all_benchmarks: Annotated[
+        bool, typer.Option("--all", help="Reproduce all declared paper benchmarks")
+    ] = False,
+    repetitions: Annotated[
+        int | None, typer.Option(help="Override repetition count (with --all)")
+    ] = None,
+    benchmarks_dir: Annotated[
+        str | None, typer.Option(help="Benchmark YAML directory (with --all)")
+    ] = None,
 ) -> None:
+    if all_benchmarks:
+        from resiliencelab.experiments.reproduce import reproduce_all
+
+        manifest = reproduce_all(
+            _store_for(store), benchmarks_dir=benchmarks_dir, repetitions=repetitions
+        )
+        console.print(
+            f"Reproduced {manifest['succeeded']}/{len(manifest['results'])} benchmarks; "
+            f"manifest: {(_store_for(store) / 'reproduction_manifest.json').resolve()}"
+        )
+        for entry in manifest["results"]:
+            status = entry.get("status", "?")
+            marker = "ok" if status == "ok" else "FAIL"
+            detail = entry.get("error") or entry.get("artifact_dir", "")
+            console.print(f"  [{marker}] {entry.get('id')}: {status} {detail}".rstrip())
+        if manifest["failed"]:
+            raise typer.Exit(code=1)
+        return
+    if experiment_id is None:
+        _err("provide EXPERIMENT_ID or use `reproduce --all`")
     base = _store_for(store) / experiment_id
     config_path = base / "configuration.yaml"
     if not config_path.exists():
@@ -325,24 +356,45 @@ def matrix(
     factor_map = _load_factors(factors) if factors else None
     from resiliencelab.analysis.design import build_design, interaction_effect, main_effect
     from resiliencelab.experiments.factorial import CORE_FACTORS
+    from resiliencelab.experiments.matrix import (
+        condition_dir,
+        condition_metadata,
+        condition_spec_for,
+    )
 
     effective_factors = factor_map or CORE_FACTORS
     conditions = build_design(spec, effective_factors)
     console.print(f"Generated {len(conditions)} experiment conditions")
+    store_root = _store_for(store)
+    base_dir = store_root / spec.id
+    base_dir.mkdir(parents=True, exist_ok=True)
     entries: list[dict[str, Any]] = []
     observations: dict[str, dict[str, list[float]]] = {}
+    condition_manifests: dict[str, Any] = {}
     for condition in conditions:
-        # Set unique ID and name for each condition to prevent artifact overwrite
-        condition_data = condition.spec.model_dump(mode="json")
-        condition_data["id"] = f"{spec.id}_{condition.condition_id}"
-        condition_data["name"] = f"{spec.name} [{condition.label()}]"
-        condition_spec = ExperimentSpec.model_validate(condition_data)
+        condition_spec = condition_spec_for(spec, condition)
 
         console.print(f"  running {condition.condition_id} ...")
         result = _run_spec(condition_spec)
-        _store_result(result, _store_for(store))
+        dest = condition_dir(store_root, spec.id, condition.condition_id)
+        manifest = write_artifacts(result, dest)
+        (dest / "condition.json").write_text(
+            json.dumps(
+                condition_metadata(spec, condition, condition_spec.id),
+                indent=2,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
+        condition_manifests[condition.condition_id] = {
+            "spec_id": condition_spec.id,
+            "artifact_dir": f"conditions/{condition.condition_id}",
+            "manifest": manifest,
+        }
         entry = result.as_comparison_entry()
         entry["condition_id"] = condition.condition_id
+        entry["spec_id"] = condition_spec.id
+        entry["artifact_dir"] = f"conditions/{condition.condition_id}"
         entries.append(entry)
         for row in entry["metrics_per_run"]:
             for metric_name, value in row.items():
@@ -353,7 +405,7 @@ def matrix(
     from resiliencelab.analysis.comparison import build_comparison
 
     comparison = build_comparison(entries)
-    comparison_path = _store_for(store) / "matrix_comparison.json"
+    comparison_path = base_dir / "matrix_comparison.json"
     comparison_path.write_text(json.dumps(comparison, indent=2, default=str), encoding="utf-8")
 
     design_doc = {
@@ -367,11 +419,12 @@ def matrix(
                 "factors": c.factors,
                 "label": c.label(),
                 "spec_id": f"{spec.id}_{c.condition_id}",
+                "artifact_dir": f"conditions/{c.condition_id}",
             }
             for c in conditions
         ],
     }
-    design_path = _store_for(store) / "matrix_design.json"
+    design_path = base_dir / "matrix_design.json"
     design_path.write_text(json.dumps(design_doc, indent=2, default=str), encoding="utf-8")
 
     effects: dict[str, Any] = {}
@@ -382,23 +435,36 @@ def matrix(
     ]
     binary_pairs = []
     factor_names = list(effective_factors)
-    for i, fa in enumerate(factor_names):
-        for fb in factor_names[i + 1 :]:
-            a_levels = {c.factors.get(fa) for c in conditions}
-            b_levels = {c.factors.get(fb) for c in conditions}
-            if len(a_levels) == 2 and len(b_levels) == 2:
-                binary_pairs.append((fa, fb))
+    from resiliencelab.experiments.matrix import binary_factor_pairs
+
+    binary_pairs = binary_factor_pairs(factor_names, conditions)
     for fa, fb in binary_pairs:
         key = f"interaction_{fa}_x_{fb}"
         try:
             effects[key] = interaction_effect(conditions, condition_observations, fa, fb)
         except ValueError:
             continue
-    effects_path = _store_for(store) / "matrix_effects.json"
+    effects_path = base_dir / "matrix_effects.json"
     effects_path.write_text(json.dumps(effects, indent=2, default=str), encoding="utf-8")
+    matrix_manifest = {
+        "base_experiment": spec.id,
+        "factors": effective_factors,
+        "condition_count": len(conditions),
+        "conditions": condition_manifests,
+        "files": {
+            "matrix_design.json": "matrix_design.json",
+            "matrix_comparison.json": "matrix_comparison.json",
+            "matrix_effects.json": "matrix_effects.json",
+        },
+    }
+    matrix_manifest_path = base_dir / "matrix_manifest.json"
+    matrix_manifest_path.write_text(
+        json.dumps(matrix_manifest, indent=2, default=str), encoding="utf-8"
+    )
     console.print(f"Comparison written to {comparison_path.resolve()}")
     console.print(f"Design written to {design_path.resolve()}")
     console.print(f"Effects written to {effects_path.resolve()}")
+    console.print(f"Matrix manifest written to {matrix_manifest_path.resolve()}")
 
 
 def _load_factors(path: str) -> dict[str, Any]:
