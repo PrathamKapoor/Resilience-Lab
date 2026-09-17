@@ -1,15 +1,19 @@
 """Recovery phase detection against explicit, configurable definitions.
 
-Recovery requires BOTH:
-1. Throughput recovery: throughput >= availability_threshold * baseline_throughput
-2. Latency recovery (if latency_series provided): p95 <= baseline_p95 * (1 + latency_tolerance)
+Recovery requires ALL evaluated gates to hold for the stability window:
 
-Both conditions must be sustained for stability_window seconds.
+1. Throughput gate (always): throughput >= availability_threshold * baseline_throughput
+2. Latency gate (when latency_series is provided and baseline_p95 > 0):
+   p95 <= baseline_p95 * (1 + latency_tolerance) * latency_ratio
+   (latency_ratio defaults to 1.0; additional slack only if configured)
+
+The report records which gates were evaluated, the latency gate value, and
+per-gate recovered flags.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -24,6 +28,14 @@ class RecoveryReport:
     degraded: bool = False
     latency_degraded: bool = False
     latency_recovered: bool = False
+    latency_gate: float = 0.0
+    gates_evaluated: list[str] = field(default_factory=list)
+
+
+def latency_gate_value(
+    baseline_p95: float, latency_tolerance: float, latency_ratio: float
+) -> float:
+    return baseline_p95 * (1 + latency_tolerance) * latency_ratio
 
 
 def detect_recovery(
@@ -34,7 +46,7 @@ def detect_recovery(
     availability_threshold: float = 0.9,
     latency_tolerance: float = 0.25,
     stability_window: float = 5.0,
-    latency_ratio: float = 2.0,
+    latency_ratio: float = 1.0,
 ) -> RecoveryReport:
     report = RecoveryReport()
     series = sorted(throughput_series)
@@ -71,6 +83,17 @@ def detect_recovery(
     report.degraded = True
     report.degraded_at = degrade_at
     report.time_to_degradation = degrade_at
+    report.gates_evaluated = ["throughput"]
+
+    latency_active = bool(latency_series) and report.baseline_p95_latency > 0
+    if latency_active and latency_series is not None:
+        report.gates_evaluated.append("latency")
+        report.latency_gate = latency_gate_value(
+            report.baseline_p95_latency, latency_tolerance, latency_ratio
+        )
+        report.latency_degraded = any(
+            p95 > report.latency_gate for t, p95 in sorted(latency_series) if t >= degrade_at
+        )
 
     recover_at = _first_sustained_recovery(
         series,
@@ -87,10 +110,11 @@ def detect_recovery(
         report.recovered_at = recover_at
         report.time_to_recovery = recover_at - degrade_at
         report.degraded_duration = recover_at - degrade_at
-        report.latency_recovered = True
+        report.latency_recovered = latency_active
     else:
         report.time_to_recovery = float("inf")
         report.degraded_duration = series[-1][0] - degrade_at
+        report.latency_recovered = False
     return report
 
 
@@ -148,7 +172,7 @@ def _latency_recovery_sustained(
 ) -> bool:
     """Check if latency has sustained recovery from start_time."""
     sorted_latency = sorted(latency_series)
-    max_latency = baseline_p95 * (1 + latency_tolerance) * latency_ratio
+    max_latency = latency_gate_value(baseline_p95, latency_tolerance, latency_ratio)
     for t, p95 in sorted_latency:
         if t < after:
             continue
