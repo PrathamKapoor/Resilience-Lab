@@ -32,16 +32,31 @@ def summarize(values: list[float], confidence: float = 0.95) -> dict[str, float]
         }
 
 
+def _is_finite_number(value: float) -> bool:
+    """True only for finite numbers (excludes inf, -inf, and nan)."""
+    return value == value and value != float("inf") and value != float("-inf")
+
+
 def summarize_censored(values: list[float], confidence: float = 0.95) -> dict[str, float | str]:
     """Censoring-aware summary for metrics that may contain ``inf`` (unrecovered).
 
-    Finite values are summarized normally; ``inf`` entries count toward
+    Finite values are summarized normally; ``inf``/``nan`` entries count toward
     ``n``/``recovery_rate`` but never enter means or CIs, so one unrecovered
     run cannot poison an interval into ``nan``.
+
+    All-censored input reports no mean/median/CI (explicit ``note``) rather
+    than ``mean=inf``; empty input preserves the no-data shape.
     """
     arr = np.asarray(values, dtype=float)
     n = int(arr.size)
-    finite = [float(v) for v in arr.tolist() if v != float("inf") and v == v]
+    if n == 0:
+        return {
+            "count": 0.0,
+            "n_recovered": 0.0,
+            "recovery_rate": 0.0,
+            "note": "no data",
+        }
+    finite = [float(v) for v in arr.tolist() if _is_finite_number(float(v))]
     recovered = len(finite)
     base: dict[str, float | str] = {
         "count": float(n),
@@ -49,7 +64,12 @@ def summarize_censored(values: list[float], confidence: float = 0.95) -> dict[st
         "recovery_rate": (recovered / n) if n else 0.0,
     }
     if not finite:
-        base.update({"mean": float("inf"), "median": float("inf"), "note": "no recovered runs"})
+        base.update(
+            {
+                "n": float(n),
+                "note": f"no recovered runs (all {n} censored/unrecovered)",
+            }
+        )
         return base
     summary = summarize(finite, confidence)
     base.update(summary)
@@ -134,26 +154,63 @@ def cohens_d_paired(a: list[float], b: list[float]) -> float:
 
 def paired_difference_summary(
     a: list[float], b: list[float], confidence: float = 0.95
-) -> dict[str, float]:
+) -> dict[str, float | str]:
     """Paired-difference summary over matched replicate observations.
 
     Pairs by position (replicate index). The confidence interval is a t-based
     CI on the per-replicate differences — the correct unit for paired designs.
+
+    Censored pairs (either side ``inf``/``nan``) never enter arithmetic means:
+    the summary is computed over recovered pairs only, with explicit
+    ``n_paired_recovered``/``n_censored_pairs`` counts. All-censored input
+    reports no mean/CI rather than ``inf``/``nan``.
     """
     x = np.asarray(a, dtype=float)
     y = np.asarray(b, dtype=float)
     n = min(x.size, y.size)
     if n == 0:
         return {"n": 0.0}
-    diffs = x[:n] - y[:n]
-    lo, hi = mean_ci(diffs, confidence)
+    a_vals = [float(v) for v in x[:n].tolist()]
+    b_vals = [float(v) for v in y[:n].tolist()]
+    a_rec: list[float] = []
+    b_rec: list[float] = []
+    n_censored = 0
+    for av, bv in zip(a_vals, b_vals, strict=True):
+        if _is_finite_number(av) and _is_finite_number(bv):
+            a_rec.append(av)
+            b_rec.append(bv)
+        else:
+            n_censored += 1
+    if n_censored == 0:
+        diffs = x[:n] - y[:n]
+        lo, hi = mean_ci(diffs, confidence)
+        return {
+            "n": float(n),
+            "mean_difference": float(diffs.mean()),
+            "median_difference": float(np.median(diffs)),
+            "ci_low": lo,
+            "ci_high": hi,
+            "cohens_d_paired": cohens_d_paired(list(x[:n]), list(y[:n])),
+        }
+    if not a_rec:
+        return {
+            "n": float(n),
+            "n_paired_recovered": 0.0,
+            "n_censored_pairs": float(n_censored),
+            "note": f"no recovered pairs (all {n} censored/unrecovered)",
+        }
+    diffs_rec = np.asarray([av - bv for av, bv in zip(a_rec, b_rec, strict=True)], dtype=float)
+    lo, hi = mean_ci(diffs_rec, confidence)
     return {
         "n": float(n),
-        "mean_difference": float(diffs.mean()),
-        "median_difference": float(np.median(diffs)),
-        "ci_low": lo,
-        "ci_high": hi,
-        "cohens_d_paired": cohens_d_paired(list(x[:n]), list(y[:n])),
+        "n_paired_recovered": float(len(a_rec)),
+        "n_censored_pairs": float(n_censored),
+        "mean_difference": float(diffs_rec.mean()),
+        "median_difference": float(np.median(diffs_rec)),
+        "ci_low": float(lo),
+        "ci_high": float(hi),
+        "cohens_d_paired": cohens_d_paired(a_rec, b_rec),
+        "note": f"{n_censored}/{n} censored pairs excluded (inf); summary over recovered pairs only",
     }
 
 
