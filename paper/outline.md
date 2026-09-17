@@ -19,15 +19,32 @@ Resilience Policies*
 ## Research questions
 
 RQ1 individual mechanisms · RQ2 failure-type sensitivity · RQ3 interaction
-effects · RQ4 failure amplification · RQ5 recovery · RQ6 workload sensitivity ·
-RQ7 trade-offs · RQ8 adaptation (future work: adaptive controllers).
+effects (two-way only) · RQ4 failure amplification · RQ5 recovery ·
+RQ6 workload sensitivity (limited: suite is closed-loop; other modes available
+but unbenchmarked) · RQ7 trade-offs (Pareto; composite weights user-chosen) ·
+RQ8 adaptation (future work: no adaptive controllers implemented).
+
+## Answerability
+
+| RQ | Status | Evidence |
+|----|--------|----------|
+| RQ1 | answerable | single-mechanism benchmarks 001-004, 009-011 |
+| RQ2 | answerable | error/latency/saturation benchmarks 001, 002, 008 |
+| RQ3 | partially (two-way binary only) | factorial design + 017/018 base configs |
+| RQ4 | answerable | amplification benchmarks 005, 012 |
+| RQ5 | answerable | recovery benchmarks 003, 007, 016 |
+| RQ6 | limited | all benchmarks closed-loop; open-loop modes exist but lack benchmark coverage |
+| RQ7 | partially (weights exposed, not principled) | scoring + Pareto |
+| RQ8 | not implemented (future work) | no adaptive controllers exist |
 
 ## Method
 
-For each benchmark × policy × workload cell: N deterministic-seed repetitions,
-workload with warmup excluded from measurement, per-bucket timeline, bootstrap
-confidence intervals, effect sizes with multiple-comparison awareness, and
-hashed immutable artifacts per run.
+For each benchmark × policy × workload cell: seeded repetitions (seeded
+decisions deterministic per Layer A; wall-clock execution varies per Layer B —
+see `docs/reproducibility.md`), workload with warmup excluded from measurement,
+per-bucket timeline, t-based confidence intervals over repetitions (bootstrap
+available opt-in), effect sizes with multiple-comparison awareness, and hashed
+artifact bundles per run (integrity, not correctness).
 
 ## Threats to validity
 
@@ -37,13 +54,19 @@ hashed immutable artifacts per run.
   generalize as mechanism behavior, not absolute numbers.
 - Construct: recovery defined by explicit thresholds recorded per experiment.
 - Statistical: repetition counts and CIs reported; no best-run reporting.
+  n=5 (most benchmarks) gives wide t-intervals (t=2.776, df=4) and low power
+  for medium effects; interactions split n further; Holm available but opt-in.
 - Infrastructure: container scheduling and noisy neighbors affect tail
   latency; report hardware and environment capture with every result.
+  Same-seed reruns may differ in counts/throughput/recovery (Layer B).
 
 ## Reproduction
 
 ```bash
 make reproduce-paper
+# equivalent: resiliencelab reproduce --all --store ./results
 ```
 
-regenerates figures and tables from stored artifacts (see `paper/reproduce.md`).
+reruns declared benchmarks, verifies bundles, and writes
+`results/reproduction_manifest.json` (see `paper/reproduce.md`). No
+figure/table generation exists yet.

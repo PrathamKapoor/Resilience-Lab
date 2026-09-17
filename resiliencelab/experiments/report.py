@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from resiliencelab.analysis.events import causal_trace, event_summary
-from resiliencelab.analysis.statistics import summarize
+from resiliencelab.analysis.statistics import summarize, summarize_censored
 from resiliencelab.core.policies import PolicyResolver, service_names
 from resiliencelab.core.schema import ExperimentSpec, PolicySpec
 from resiliencelab.events import EventType
@@ -31,11 +31,30 @@ def _summary_line(label: str, values: list[float]) -> str:
     )
 
 
+def _censored_summary_line(label: str, values: list[float]) -> str:
+    stats = summarize_censored(values)
+    n = int(stats.get("count", 0))
+    if n == 0 or "mean" not in stats:
+        return f"- **{label}**: no data"
+    recovered = int(stats.get("n_recovered", n))
+    rate = float(stats.get("recovery_rate", 1.0))
+    if recovered == 0:
+        return f"- **{label}**: unrecovered in all {n} run(s) (recovery rate 0.0)"
+    if recovered < n:
+        return (
+            f"- **{label}**: mean={_fmt(float(stats['mean']))} over {recovered}/{n} recovered "
+            f"(recovery rate {rate:.2f}), 95% CI [{_fmt(float(stats['ci_low']))}, "
+            f"{_fmt(float(stats['ci_high']))}]"
+        )
+    return _summary_line(label, values)
+
+
 def _statistical_provenance(result: ExperimentResult) -> str:
     return (
         "Analysis: repetition-level means with 95% t-based CI (resampling unit = "
-        "repetition); bootstrap/exact distribution when n>=2; determine "
-        "analyses key off `analysis_version` in artifacts."
+        "repetition; bootstrap available opt-in); seeded decisions deterministic "
+        "(Layer A), wall-clock execution varies (Layer B); analyses key off "
+        "`analysis_version` in artifacts."
     )
 
 
@@ -61,9 +80,10 @@ def automatic_analysis(result: ExperimentResult) -> str:
         _summary_line("p99 latency (s)", p99),
         _summary_line("error rate", error_rate),
         _summary_line("failure amplification", amplification),
-        _summary_line("time to recovery (s)", recovery),
+        _censored_summary_line("time to recovery (s)", recovery),
         "",
-        "Statistical confidence: 95% confidence intervals reported for primary metrics.",
+        "Statistical confidence: 95% t-based confidence intervals reported for primary metrics "
+        "(repetition unit; n=5 gives wide intervals; unrecovered runs reported as inf with recovery rate).",
         "",
         "Recommendation: see comparison and interaction analysis for evidence-based ranking.",
     ]
@@ -210,7 +230,10 @@ def build_report(result: ExperimentResult) -> str:
         "timeout_rate",
     ]:
         values = [m[metric] for m in metrics_per_run]
-        sections.append(_summary_line(metric, values))
+        if metric == "recovery_time":
+            sections.append(_censored_summary_line(metric, values))
+        else:
+            sections.append(_summary_line(metric, values))
     components = latency_components([r for run in result.runs for r in run.records])
     sections += [
         "",

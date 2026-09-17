@@ -32,6 +32,34 @@ def summarize(values: list[float], confidence: float = 0.95) -> dict[str, float]
         }
 
 
+def summarize_censored(values: list[float], confidence: float = 0.95) -> dict[str, float | str]:
+    """Censoring-aware summary for metrics that may contain ``inf`` (unrecovered).
+
+    Finite values are summarized normally; ``inf`` entries count toward
+    ``n``/``recovery_rate`` but never enter means or CIs, so one unrecovered
+    run cannot poison an interval into ``nan``.
+    """
+    arr = np.asarray(values, dtype=float)
+    n = int(arr.size)
+    finite = [float(v) for v in arr.tolist() if v != float("inf") and v == v]
+    recovered = len(finite)
+    base: dict[str, float | str] = {
+        "count": float(n),
+        "n_recovered": float(recovered),
+        "recovery_rate": (recovered / n) if n else 0.0,
+    }
+    if not finite:
+        base.update({"mean": float("inf"), "median": float("inf"), "note": "no recovered runs"})
+        return base
+    summary = summarize(finite, confidence)
+    base.update(summary)
+    base["count"] = float(n)
+    base["n"] = float(n)
+    if recovered < n:
+        base["note"] = f"{n - recovered}/{n} unrecovered (inf excluded from mean/CI)"
+    return base
+
+
 def mean_ci(values: np.ndarray, confidence: float = 0.95) -> tuple[float, float]:
     n = len(values)
     with np.errstate(invalid="ignore"):
