@@ -20,12 +20,15 @@ class ConfigValidationError(Exception):
 def parse_experiment(data: dict[str, Any]) -> ExperimentSpec:
     if not isinstance(data, dict):
         raise ConfigValidationError("configuration root must be a mapping")
-    identity = data.get("experiment")
-    if isinstance(identity, dict):
-        merged = {key: value for key, value in data.items() if key != "experiment"}
-        merged.update(identity)
-        return ExperimentSpec.model_validate(merged)
-    return ExperimentSpec.model_validate(data)
+    try:
+        identity = data.get("experiment")
+        if isinstance(identity, dict):
+            merged = {key: value for key, value in data.items() if key != "experiment"}
+            merged.update(identity)
+            return ExperimentSpec.model_validate(merged)
+        return ExperimentSpec.model_validate(data)
+    except ValidationError as exc:
+        raise ConfigValidationError(str(exc)) from exc
 
 
 def load_yaml(path: str | Path) -> ExperimentSpec:
