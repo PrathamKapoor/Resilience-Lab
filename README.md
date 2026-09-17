@@ -17,7 +17,7 @@ network delay, queueing, and capacity), not a production infrastructure. See
 - Resilience mechanisms: retries, fixed/linear/exponential backoff, full/equal/range jitter, circuit breaker (closed/open/half-open), concurrency limiting with queueing/rejection, connect/read/total timeouts — with optional per-service policy overrides (isolated breaker/concurrency/retry state per dependency).
 - Fault injection: HTTP 500/502/503/429, connection reset/refusal, timeouts, latency injection and spikes, saturation; constant/random/burst/periodic/step/ramp temporal modes.
 - Controlled simulation: per-service processing latency (constant/uniform/normal/lognormal/Pareto), inter-service network latency and jitter, service-side capacity with bounded/unbounded queues and rejection.
-- Standardized benchmark suite RL-BENCH-001..016 (see `docs/benchmarks.md`).
+- Standardized benchmark suite RL-BENCH-001..018 (see `docs/benchmarks.md`).
 - Reproducible workloads (open/closed loop, constant-rate, ramp) with warmup excluded from measurement.
 - Metrics: availability, throughput, p50/p90/p95/p99/p99.9, error/timeout rates, recovery phases, retry depth, circuit transitions, and failure amplification (downstream calls per upstream request).
 - Analysis: bootstrap confidence intervals, effect sizes, cross-policy comparison, interaction effects, composite scoring with exposed weights.

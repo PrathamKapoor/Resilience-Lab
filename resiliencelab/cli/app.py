@@ -207,6 +207,9 @@ def compare(
     experiment_ids: Annotated[list[str], typer.Argument(help="Two or more experiment IDs")],
     store: Annotated[str | None, typer.Option()] = None,
     paired: Annotated[bool, typer.Option("--paired", help="Match replicates by index")] = False,
+    confidence: Annotated[
+        float, typer.Option("--confidence", help="Confidence level for CIs")
+    ] = 0.95,
 ) -> None:
     if len(experiment_ids) < 2:
         _err("compare requires at least two experiment IDs")
@@ -219,7 +222,7 @@ def compare(
         experiments.append(data)
     from resiliencelab.analysis.comparison import build_comparison, build_paired_comparison
 
-    comparison = build_comparison(experiments)
+    comparison = build_comparison(experiments, confidence=confidence)
     table = Table(title="Condition means (n = repetitions)")
     table.add_column("metric", justify="right")
     for experiment in comparison["experiments"]:
@@ -241,6 +244,14 @@ def compare(
     console.print(table)
 
     if paired and len(experiments) >= 2:
+        # Validate seed compatibility for paired comparison
+        seeds_a = experiments[0].get("seeds", [])
+        seeds_b = experiments[1].get("seeds", [])
+        if seeds_a and seeds_b and seeds_a != seeds_b:
+            console.print(
+                "[yellow]Warning: seeds differ between experiments; "
+                "paired comparison assumes matched replicates by index.[/yellow]"
+            )
         paired_result = build_paired_comparison(experiments[0], experiments[1], metrics)
         console.print(
             f"\nPaired difference ({paired_result['reference']} - {paired_result['versus']}, "
@@ -321,8 +332,14 @@ def matrix(
     entries: list[dict[str, Any]] = []
     observations: dict[str, dict[str, list[float]]] = {}
     for condition in conditions:
+        # Set unique ID and name for each condition to prevent artifact overwrite
+        condition_data = condition.spec.model_dump(mode="json")
+        condition_data["id"] = f"{spec.id}_{condition.condition_id}"
+        condition_data["name"] = f"{spec.name} [{condition.label()}]"
+        condition_spec = ExperimentSpec.model_validate(condition_data)
+
         console.print(f"  running {condition.condition_id} ...")
-        result = _run_spec(condition.spec)
+        result = _run_spec(condition_spec)
         _store_result(result, _store_for(store))
         entry = result.as_comparison_entry()
         entry["condition_id"] = condition.condition_id
@@ -349,7 +366,7 @@ def matrix(
                 "index": c.index,
                 "factors": c.factors,
                 "label": c.label(),
-                "spec_id": c.spec.id,
+                "spec_id": f"{spec.id}_{c.condition_id}",
             }
             for c in conditions
         ],
