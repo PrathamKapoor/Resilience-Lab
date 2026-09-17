@@ -24,7 +24,7 @@ workload:
 failure:
   - target: payment_service
     type: http_503
-    mode: intermittent
+    mode: periodic
     probability: 0.5
     duration: 8s
     period: 12s
