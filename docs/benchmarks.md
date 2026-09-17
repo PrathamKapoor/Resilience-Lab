@@ -18,6 +18,8 @@
 | RL-BENCH-014 | per-service-breaker-isolation | Independent circuit breaker and retry state per dependency |
 | RL-BENCH-015 | retry-causal-trace | Failure → retry → outcome reconstructable from events |
 | RL-BENCH-016 | saturation-recovery-trace | Queueing/saturation/rejection/recovery observable as events |
+| RL-BENCH-017 | timeout-cascade | Timeout propagation through a dependency chain |
+| RL-BENCH-018 | retry-by-capacity-factorial | Full-factorial design quantifying when retries improve availability |
 
 Run one with:
 
