@@ -292,7 +292,12 @@ def reproduce(
         int | None, typer.Option(help="Override repetition count (with --all)")
     ] = None,
     benchmarks_dir: Annotated[
-        str | None, typer.Option(help="Benchmark YAML directory (with --all)")
+        str | None,
+        typer.Option(
+            help="Benchmark YAML directory (with --all). Resolution order: "
+            "--benchmarks-dir, ./benchmarks (CWD), configs/benchmarks. "
+            "A partial dir plus repo CWD can still resolve the real suite."
+        ),
     ] = None,
 ) -> None:
     if all_benchmarks:
@@ -335,7 +340,13 @@ def benchmark(
     name: Annotated[str, typer.Argument(help="Benchmark name (e.g. RL-BENCH-003)")],
     repetitions: Annotated[int | None, typer.Option()] = None,
     store: Annotated[str | None, typer.Option()] = None,
-    benchmarks_dir: Annotated[str | None, typer.Option()] = None,
+    benchmarks_dir: Annotated[
+        str | None,
+        typer.Option(
+            help="Benchmark YAML directory. Resolution order: --benchmarks-dir, "
+            "./benchmarks (CWD), configs/benchmarks."
+        ),
+    ] = None,
 ) -> None:
     resolved = resolve_benchmark_path(normalize_benchmark_name(name), benchmarks_dir)
     if resolved is None:
