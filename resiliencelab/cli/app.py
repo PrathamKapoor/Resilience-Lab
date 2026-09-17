@@ -319,7 +319,10 @@ def reproduce(
     config_path = base / "configuration.yaml"
     if not config_path.exists():
         _err(f"no configuration found for `{experiment_id}`")
-    spec = load_yaml(config_path)
+    try:
+        spec = load_yaml(config_path)
+    except (ConfigValidationError, OSError) as exc:
+        _err(str(exc))
     result = _run_spec(spec)
     out_base = _store_for(store) / (output or f"{experiment_id}-repro")
     write_artifacts(result, out_base)
@@ -337,7 +340,10 @@ def benchmark(
     resolved = resolve_benchmark_path(normalize_benchmark_name(name), benchmarks_dir)
     if resolved is None:
         _err(f"unknown benchmark `{name}`")
-    spec = load_yaml(resolved)
+    try:
+        spec = load_yaml(resolved)
+    except (ConfigValidationError, OSError) as exc:
+        _err(str(exc))
     if repetitions is not None:
         spec.repetitions.count = repetitions
     result = _run_spec(spec)
@@ -540,7 +546,10 @@ def matrix(
 def _load_factors(path: str) -> dict[str, Any]:
     import yaml
 
-    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    try:
+        raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ConfigValidationError(f"invalid YAML in {path}: {exc}") from exc
     if not isinstance(raw, dict):
         _err("factors file must contain a mapping of path -> list of values")
     return dict(raw)
@@ -562,11 +571,17 @@ def server_submit(
     path: Annotated[str, typer.Argument(help="Path to experiment YAML")],
     api_url: Annotated[str | None, typer.Option(help="API server URL")] = None,
 ) -> None:
-    spec = load_yaml(path)
+    try:
+        spec = load_yaml(path)
+    except (ConfigValidationError, OSError) as exc:
+        _err(str(exc))
     import yaml
 
     config_data = {"experiment": {"id": spec.id, "name": spec.name, "version": spec.version}}
-    config_data.update(yaml.safe_load(Path(path).read_text(encoding="utf-8")))
+    try:
+        config_data.update(yaml.safe_load(Path(path).read_text(encoding="utf-8")))
+    except yaml.YAMLError as exc:
+        _err(f"invalid YAML in {path}: {exc}")
     client = _server_client()
     response = client.post("/api/v1/experiments", json={"config": config_data})
     if response.status_code != 201:
