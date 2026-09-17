@@ -112,6 +112,11 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
 def verify_artifacts(base_dir: Path) -> dict[str, Any]:
     """Verify integrity of an artifact bundle against its manifest.
 
+    Integrity means every tracked file exists and matches its recorded SHA256.
+    It does NOT establish scientific correctness (valid design, correct
+    statistics, meaningful thresholds). The manifest itself is unsigned: an
+    attacker who rewrites files and the manifest consistently will pass.
+    Untracked files yield warnings, not errors.
     Returns a dict with:
         - valid: bool — True only if every check passes
         - errors: list[str] — human-readable error descriptions
@@ -192,13 +197,23 @@ def _build_statistics(result: ExperimentResult) -> dict[str, Any]:
     for run in per_run:
         for key, value in run.items():
             metrics.setdefault(key, []).append(value)
-    from resiliencelab.analysis.statistics import STAT_ANALYSIS_VERSION, summarize
+    from resiliencelab.analysis.statistics import (
+        STAT_ANALYSIS_VERSION,
+        summarize,
+        summarize_censored,
+    )
 
-    metric_summaries = {key: summarize(values) for key, values in metrics.items()}
+    confidence = result.experiment.analysis.confidence_level
+    metric_summaries: dict[str, Any] = {}
+    for key, values in metrics.items():
+        if key == "recovery_time" and any(v == float("inf") for v in values):
+            metric_summaries[key] = summarize_censored(values, confidence)
+        else:
+            metric_summaries[key] = summarize(values, confidence)
     return {
         "analysis_version": STAT_ANALYSIS_VERSION,
         "resampling_unit": "repetition",
         "statistical_method": "t_mean_ci",
-        "confidence_level": 0.95,
+        "confidence_level": confidence,
         "metrics": metric_summaries,
     }

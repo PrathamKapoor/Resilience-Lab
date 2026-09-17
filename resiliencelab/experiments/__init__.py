@@ -2,6 +2,12 @@
 
 from resiliencelab.experiments.artifacts import verify_artifacts, write_artifacts
 from resiliencelab.experiments.factorial import CORE_FACTORS, generate_matrix
+from resiliencelab.experiments.matrix import (
+    binary_factor_pairs,
+    condition_dir,
+    condition_metadata,
+    condition_spec_for,
+)
 from resiliencelab.experiments.provenance import (
     canonical_config,
     capture_environment,
@@ -20,9 +26,13 @@ __all__ = [
     "ExperimentRunner",
     "RunResult",
     "automatic_analysis",
+    "binary_factor_pairs",
     "build_report",
     "canonical_config",
     "capture_environment",
+    "condition_dir",
+    "condition_metadata",
+    "condition_spec_for",
     "generate_matrix",
     "hash_config",
     "hash_records",

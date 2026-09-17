@@ -58,14 +58,20 @@ Confidence intervals are computed using the student-t method (`mean_ci` in `anal
 mean ± t_(1-α/2, n-1) * (s / sqrt(n))
 ```
 
-For bootstrap intervals (`bootstrap_ci`), resamples are drawn with replacement from the repetition-level observations (`resampling_unit = "repetition"`) and percentiles are computed at the configured confidence level (default 0.95). The bootstrap uses a deterministic `np.random.default_rng(0)` when no `rng` is provided.
+Default CIs are t-based; `bootstrap_ci` is available opt-in (`aggregate_metric(use_bootstrap=True)`,
+`interaction_with_uncertainty`) and is NOT the default in artifacts, `compare`, or `matrix`.
+Artifact statistics record the configured `confidence_level` from the experiment spec.
 
-### Small-n behavior
+### Small-n behavior and power
 
 The system never reports false precision for very small samples:
 
 - `n < 2`: describes statistics only; no inferential CI or effect size is produced (`small_sample_note`).
 - `n < 5`: reports a cautionary note (`"highly uncertain"`).
+- `n = 5` (most benchmarks): t-intervals use `t=2.776 (df=4)` — wide by
+  construction, with low power for medium effects. Treat "overlapping CIs"
+  reproduction checks as weak evidence and non-overlap as suggestive, not proof.
+  Two-way interactions split n further across cells.
 
 Every statistical output includes `n` (repetition count) explicitly (`aggregate_metric`, `build_report`).
 
@@ -89,6 +95,7 @@ Effect sizes are reported only when `n >= 2` for the compared groups.
 For family-wise comparisons across factorial conditions, Holm-Bonferroni step-down correction (`holm_adjust`) is available. The comparison family is defined as all pairwise metric comparisons performed in a single `build_comparison` invocation.
 
 Correction is not automatically applied to all outputs; it is applied where explicitly configured (`analysis_version` and comparison artifacts must document the correction method used, if any).
+Default `compare`/`matrix` outputs are uncorrected across the 9 primary metrics.
 
 ## 8. Pareto / Trade-off Analysis
 
@@ -103,13 +110,19 @@ The CLI `compare` command and `matrix` output do not assign arbitrary weights; w
 
 ## 9. Recovery Analysis
 
-Recovery is defined explicitly in `analysis/recovery.py` (`detect_recovery`):
+Recovery is defined explicitly in `analysis/recovery.py` (`detect_recovery`).
+All evaluated gates must hold for the continuous stability window W:
 
 ```text
-throughput ≥ X% of baseline  AND  p95 ≤ Y% of baseline  for continuous stability window W
+throughput ≥ availability_threshold × baseline  AND  (when latency data exists)
+p95 ≤ baseline_p95 × (1 + latency_tolerance) × latency_ratio  (latency_ratio = 1.0 by default)
 ```
 
-Recovery statistics (`time_to_degradation`, `degraded_duration`, `time_to_recovery`) are reported per repetition and aggregated across repetitions. Unrecovered conditions are represented as `inf` (censored/unrecovered), not as zero recovery time.
+The report persists `gates_evaluated` (`["throughput"]` or
+`["throughput", "latency"]`), `baseline_p95_latency`, `latency_gate`,
+`latency_degraded`, and `latency_recovered` alongside the timing fields.
+
+Recovery statistics (`time_to_degradation`, `degraded_duration`, `time_to_recovery`) are reported per repetition and aggregated across repetitions. Unrecovered conditions are represented as `inf` (censored/unrecovered), not as zero recovery time. Aggregations over `recovery_time` use censored statistics (recovery rate plus summaries over recovered runs) so a single `inf` cannot poison a mean/CI into `nan`.
 
 Repeated recovery statistics are included in `ExperimentResult.as_comparison_entry()` and in artifacts (`metrics_per_run`).
 
@@ -151,16 +164,19 @@ The artifact manifest (`manifest.json`) links all files by cryptographic hash, e
 ## 13. Limitations and Scope
 
 - Only two-factor interactions are fully implemented (`interaction_effect`). Arbitrary multi-factor ANOVA or GLM frameworks are not included; adding them without proper validation would risk statistical misleadingness.
-- Paired designs assume that replicate index `i` corresponds to the same stochastic conditions across conditions (deterministic seed assignment ensures this for the base design).
+- Paired designs assume that replicate index `i` corresponds to the same stochastic conditions across conditions (deterministic seed assignment ensures this for the base design). Pairing by index when recorded seeds differ emits an explicit warning; such comparisons are not valid paired evidence.
+- `interaction_with_uncertainty` resamples cells independently and does not preserve pairing; use it for independent-cell uncertainty only.
+- Default `build_comparison` effect sizes are independent-group Cohen's d even when conditions share seeds; use `build_paired_comparison` (paired d) for matched designs.
 - Bootstrap intervals assume independent repetition-level observations. They do not model temporal autocorrelation within a single repetition.
-- Small samples (`n < 5`) produce highly uncertain intervals. The system reports this explicitly rather than suppressing it.
+- Small samples (`n < 5`) produce highly uncertain intervals; `n = 5` intervals remain wide (see §4). The system reports this explicitly rather than suppressing it.
 
 ## 14. Anti-Leakage Guarantees
 
 Critical scientific mistakes are caught by dedicated tests (`tests/test_statistics_anti_leakage.py`):
 
 - **Pseudo-replication**: statistics use repetition count, not request count.
-- **Pairing mismatch**: unbalanced replicates trigger a warning; silent pairing of mismatched conditions is prevented.
+- **Pairing mismatch**: unbalanced replicates trigger a warning; seed-divergent
+  pairings trigger a warning; silent pairing of mismatched conditions is prevented.
 - **Bootstrap determinism**: identical inputs produce identical results.
 - **Condition contamination**: observations from one factorial cell cannot enter another.
 - **Seed provenance**: every statistical observation references its source `run_id` / `seed`.

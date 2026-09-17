@@ -149,6 +149,19 @@ def build_paired_comparison(
         result["warnings"].append(
             f"unbalanced replicates (a={len(a_runs)}, b={len(b_runs)}); paired by first {n}"
         )
+    seeds_a = a.get("seeds")
+    seeds_b = b.get("seeds")
+    if (
+        isinstance(seeds_a, list)
+        and isinstance(seeds_b, list)
+        and seeds_a
+        and seeds_b
+        and list(seeds_a[:n]) != list(seeds_b[:n])
+    ):
+        result["warnings"].append(
+            "seeds differ between conditions; paired comparison pairs by replicate "
+            "index, which is valid only when index i shares stochastic conditions"
+        )
     for metric in metrics:
         result["metrics"][metric] = _pair_metric(a_runs, b_runs, metric)
     return result
