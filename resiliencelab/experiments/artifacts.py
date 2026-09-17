@@ -37,6 +37,7 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
     record("configuration.yaml", dump_yaml(result.experiment).encode("utf-8"))
     record("environment.json", json.dumps(result.environment, indent=2).encode("utf-8"))
 
+    recovery = result.recovery_provenance()
     summary = {
         "id": result.experiment.id,
         "name": result.experiment.name,
@@ -54,6 +55,7 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
         "requested_repetitions": result.experiment.repetitions.count,
         "cancelled": result.cancelled,
         "cancellation_reason": result.cancellation_reason,
+        "recovery": recovery,
     }
     record("experiment.json", json.dumps(summary, indent=2).encode("utf-8"))
 
@@ -216,4 +218,5 @@ def _build_statistics(result: ExperimentResult) -> dict[str, Any]:
         "statistical_method": "t_mean_ci",
         "confidence_level": confidence,
         "metrics": metric_summaries,
+        "recovery": result.recovery_provenance(),
     }

@@ -234,6 +234,15 @@ def build_report(result: ExperimentResult) -> str:
             sections.append(_censored_summary_line(metric, values))
         else:
             sections.append(_summary_line(metric, values))
+    sections.append(f"- **recovery gate decision**: {result.recovery_gate_line()}")
+    prov = result.recovery_provenance()
+    thresholds = prov["thresholds"]
+    sections.append(
+        "- **recovery thresholds**: "
+        f"availability_threshold={thresholds['availability_threshold']}, "
+        f"latency_tolerance={thresholds['latency_tolerance']}, "
+        f"stability_window={thresholds['stability_window']}s"
+    )
     components = latency_components([r for run in result.runs for r in run.records])
     sections += [
         "",
