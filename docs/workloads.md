@@ -7,8 +7,10 @@ distinguishes **closed-loop** (client-driven) traffic from **arrival processes**
 All arrival processes are pure, seeded functions of `(elapsed time, rng)`: the
 inter-arrival gap they return is deterministic for a given seed and elapsed time.
 Only the wall-clock *scheduling* of those gaps (via `asyncio.sleep`) is
-non-reproducible. This keeps stochastic decisions reproducible while explicitly
-allowing measured completion times to vary.
+non-reproducible. Closed-loop traffic additionally depends on response timing,
+so same-seed runs may issue different request counts. This keeps stochastic
+decisions reproducible (Layer A) while explicitly allowing measured execution
+to vary (Layer B); see `docs/reproducibility.md`.
 
 ## Modes
 
@@ -35,7 +37,7 @@ allowing measured completion times to vary.
 | `period` | Oscillation period (`periodic`). | `1s` |
 | `burstiness` | Oscillation amplitude (`periodic`). | `1.0` |
 | `payload_size` | Accepted, not yet wired into the in-process SUT. | `64` |
-| `endpoint_mix` | Accepted, not yet wired (single logical endpoint). | `["/"]` |
+| `endpoint_mix` | Selects the recorded `operation` label per request (deterministic); all endpoints share one behavior, so it does not model differential load. | `["/"]` |
 
 ## Latency measurement semantics
 
