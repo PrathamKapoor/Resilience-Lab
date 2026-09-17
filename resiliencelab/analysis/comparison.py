@@ -13,6 +13,7 @@ from typing import Any
 
 from resiliencelab.analysis.statistics import (
     STAT_ANALYSIS_VERSION,
+    bootstrap_ci,
     cohens_d,
     paired_difference_summary,
     small_sample_note,
@@ -33,16 +34,36 @@ PRIMARY_METRICS = [
 
 
 def aggregate_metric(
-    metrics_per_run: Iterable[dict[str, Any]], name: str, confidence: float = 0.95
+    metrics_per_run: Iterable[dict[str, Any]],
+    name: str,
+    confidence: float = 0.95,
+    use_bootstrap: bool = False,
 ) -> dict[str, Any]:
     values = [m[name] for m in metrics_per_run if name in m and m[name] is not None]
-    summary_raw = summarize(values, confidence)
-    summary: dict[str, Any] = dict(summary_raw)
+    if not values:
+        return {"n": 0.0}
+    if use_bootstrap and len(values) >= 3:
+        lo, hi = bootstrap_ci(values, confidence)
+        mean_val = sum(values) / len(values)
+        summary: dict[str, Any] = {
+            "n": float(len(values)),
+            "mean": mean_val,
+            "median": sorted(values)[len(values) // 2],
+            "ci_low": lo,
+            "ci_high": hi,
+            "method": "bootstrap",
+            "resampling_unit": "repetition",
+            "analysis_version": STAT_ANALYSIS_VERSION,
+            "warnings": small_sample_note(len(values)),
+        }
+    else:
+        summary_raw = summarize(values, confidence)
+        summary = dict(summary_raw)
+        summary["method"] = "t_mean_ci"
+        summary["resampling_unit"] = "repetition"
+        summary["analysis_version"] = STAT_ANALYSIS_VERSION
+        summary["warnings"] = small_sample_note(int(summary.get("count", 0)))
     summary["n"] = summary.get("count", 0.0)
-    summary["method"] = "t_mean_ci"
-    summary["resampling_unit"] = "repetition"
-    summary["analysis_version"] = STAT_ANALYSIS_VERSION
-    summary["warnings"] = small_sample_note(int(summary["n"]))
     return summary
 
 
@@ -64,6 +85,7 @@ def _pair_metric(
 def build_comparison(
     experiments: list[dict[str, Any]],
     metrics: list[str] | None = None,
+    confidence: float = 0.95,
 ) -> dict[str, Any]:
     metrics = metrics or PRIMARY_METRICS
     rows: dict[str, dict[str, Any]] = {}
@@ -72,12 +94,13 @@ def build_comparison(
         per_run = experiment.get("metrics_per_run", [])
         row: dict[str, Any] = {"name": name, "id": experiment.get("id")}
         for metric in metrics:
-            row[metric] = aggregate_metric(per_run, metric)
+            row[metric] = aggregate_metric(per_run, metric, confidence)
         rows[name] = row
 
     comparison: dict[str, Any] = {
         "analysis_version": STAT_ANALYSIS_VERSION,
         "paired": False,
+        "confidence_level": confidence,
         "experiments": list(rows.values()),
     }
 

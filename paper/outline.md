@@ -10,7 +10,7 @@ Resilience Policies*
 1. A reproducible experimental framework for resilience evaluation.
 2. A controlled fault-model taxonomy (errors, latency, connection, saturation,
    temporal modes).
-3. A standardized benchmark suite (RL-BENCH-001..008).
+3. A standardized benchmark suite (RL-BENCH-001..018).
 4. Systematic evaluation of retry, backoff, jitter, circuit breaking,
    concurrency limiting, and timeouts — individually and combined.
 5. Empirical analysis of mechanism interactions and failure amplification.

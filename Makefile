@@ -36,7 +36,14 @@ benchmark:
 	resiliencelab benchmark RL-BENCH-003
 
 reproduce-paper:
-	resiliencelab reproduce --all
+	@echo "Usage: make reproduce-paper EXPERIMENT_ID=<id>"
+	@echo "Example: make reproduce-paper EXPERIMENT_ID=RL-BENCH-001"
+	@if [ -n "$(EXPERIMENT_ID)" ]; then \
+		resiliencelab reproduce $(EXPERIMENT_ID); \
+	else \
+		echo "Error: EXPERIMENT_ID required"; \
+		exit 1; \
+	fi
 
 clean:
 	@rm -rf .pytest_cache .mypy_cache .ruff_cache build dist *.egg-info
