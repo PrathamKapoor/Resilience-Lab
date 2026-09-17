@@ -32,8 +32,17 @@ def parse_experiment(data: dict[str, Any]) -> ExperimentSpec:
 
 
 def load_yaml(path: str | Path) -> ExperimentSpec:
+    """Load an experiment spec, normalizing YAML syntax errors.
+
+    Raw ``yaml.YAMLError`` parser failures are wrapped into the public
+    :class:`ConfigValidationError` at this configuration boundary so CLI and
+    library callers observe one error contract and never a raw parser traceback.
+    """
     text = Path(path).read_text(encoding="utf-8")
-    data = yaml.safe_load(text)
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ConfigValidationError(f"invalid YAML in {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise ConfigValidationError("configuration root must be a mapping")
     return parse_experiment(data)
