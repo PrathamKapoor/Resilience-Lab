@@ -66,22 +66,54 @@ class DesignCondition:
         return ", ".join(parts)
 
 
+def _canonical_level(level: Any) -> str:
+    """Canonical key for a factor level, consistent with condition hashing."""
+    return json.dumps(level, sort_keys=True, default=str)
+
+
 def build_design(base: ExperimentSpec, factors: dict[str, list[Any]]) -> list[DesignCondition]:
     """Deterministic full-factorial expansion.
 
     Every condition keeps the base ``repetitions`` configuration, so the ith
     replicate of every condition shares the same seed (paired by replicate
     index). Condition IDs are content-hashed, not index-based.
+
+    Duplicate factor levels are rejected: levels that are canonically equal
+    (including ``None`` duplicates, duplicate primitives, and dict levels that
+    differ only by key ordering) would generate semantically identical
+    conditions and silently break ``condition_count`` accounting, so they raise
+    ``ValueError``. Duplicate resulting conditions across nested factor paths
+    are likewise rejected via condition-ID collision detection.
     """
+    for path, levels in factors.items():
+        seen: dict[str, int] = {}
+        for pos, level in enumerate(levels):
+            key = _canonical_level(level)
+            if key in seen:
+                raise ValueError(
+                    f"duplicate factor level for {path!r}: "
+                    f"positions {seen[key]} and {pos} are canonically equal "
+                    f"({_canonical_level(level)}); remove or distinguish duplicates"
+                )
+            seen[key] = pos
     keys = list(factors.keys())
     value_sets = [factors[key] for key in keys]
     conditions: list[DesignCondition] = []
+    seen_ids: dict[str, int] = {}
     for index, combo in enumerate(itertools.product(*value_sets)):
         assignments = dict(zip(keys, combo, strict=True))
         spec = apply_factors(base, assignments)
+        cid = condition_hash(base.id, assignments)
+        if cid in seen_ids:
+            raise ValueError(
+                f"duplicate factorial condition: index {index} collides with index "
+                f"{seen_ids[cid]} (condition_id={cid}); factor levels across nested "
+                "paths must produce distinct conditions"
+            )
+        seen_ids[cid] = index
         conditions.append(
             DesignCondition(
-                condition_id=condition_hash(base.id, assignments),
+                condition_id=cid,
                 index=index,
                 factors=assignments,
                 spec=spec,
