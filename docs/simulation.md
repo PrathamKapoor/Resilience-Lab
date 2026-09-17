@@ -93,8 +93,10 @@ seed architecture as faults:
 - network:    `generator_for(seed, request_id, NETWORK_RNG_SALT, service_index)`
 
 The same experiment configuration + seed yields the same simulated stochastic
-decisions. Queue/reject decisions are deterministic given arrival order.
-Wall-clock completion times still vary by host.
+decisions (Layer A in `docs/reproducibility.md`). Queue/reject outcomes are
+deterministic given arrival order, but arrival order, request counts,
+throughput, queue waits, and wall-clock completion times vary by host and
+scheduling (Layer B). Do not claim same-seed identical metrics.
 
 ## Metrics
 

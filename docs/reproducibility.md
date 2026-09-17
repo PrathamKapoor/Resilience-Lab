@@ -19,12 +19,24 @@ results/<experiment-id>/
 Guarantees and limits:
 
 - `manifest.json` records SHA256 hashes of every file plus the configuration
-  hash and raw-records hash.
+  hash and raw-records hash. Verification checks integrity (hashes match),
+  not scientific correctness. The manifest is unsigned and untracked files
+  warn rather than fail; treat verification as tamper-evidence, not proof.
 - `resiliencelab reproduce <id>` reloads `configuration.yaml`, reruns with the
   recorded seeds, and stores the new bundle for comparison.
-- Randomness is derived per request from `(seed, request_id)`, so identical
-  seeds give identical fault decisions and jitter draws.
-- Exact timing (throughput, latencies) varies with hardware and scheduling;
-  reproduction is therefore *statistically consistent* (overlapping confidence
-  intervals), not bit-identical. Compare `analysis/statistics.json` across
-  bundles to verify.
+- `resiliencelab reproduce --all` reruns every declared benchmark, verifies
+  each bundle, and writes `results/reproduction_manifest.json` (non-zero exit
+  if any benchmark is missing, fails, or fails verification).
+- Reproducibility has three layers:
+  - **Layer A — seeded decisions (deterministic).** Same configuration + seed
+    gives identical fault draws, jitter draws, processing/network draws, and
+    endpoint routing for the same `request_id` (see `core/seeds.py`).
+  - **Layer B — wall-clock execution (varies).** Request counts, throughput,
+    queue waits, deadline-boundary timeouts, recovery times, and measured
+    latencies depend on real scheduling and may differ across same-seed runs.
+    Same seed does NOT imply identical complete metrics.
+  - **Layer C — artifact provenance (recorded).** Configuration, seeds,
+    environment, statistical method/version, and hashes are recorded so a
+    later researcher can reconstruct the exact pipeline and compare
+    `analysis/statistics.json` across bundles (overlapping confidence
+    intervals), not bit-identical metrics.
