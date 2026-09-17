@@ -22,7 +22,11 @@ def _set_path(mapping: dict[str, Any], path: str, value: Any) -> None:
     parts = path.split(".")
     target = mapping
     for part in parts[:-1]:
-        target = target.setdefault(part, {})
+        child = target.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            target[part] = child
+        target = child
     if value is None:
         target.pop(parts[-1], None)
     else:
