@@ -18,7 +18,35 @@ from resiliencelab.analysis.statistics import (
     paired_difference_summary,
     small_sample_note,
     summarize,
+    summarize_censored,
 )
+
+
+def _has_censored(values: list[float]) -> bool:
+    for v in values:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if f != f or f == float("inf") or f == float("-inf"):
+            return True
+    return False
+
+
+def _recovery_rates(values: list[float]) -> tuple[int, int, float]:
+    finite = 0
+    total = 0
+    for v in values:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        total += 1
+        if f == f and f != float("inf") and f != float("-inf"):
+            finite += 1
+    rate = (finite / total) if total else 0.0
+    return finite, total, rate
+
 
 PRIMARY_METRICS = [
     "availability",
@@ -39,9 +67,30 @@ def aggregate_metric(
     confidence: float = 0.95,
     use_bootstrap: bool = False,
 ) -> dict[str, Any]:
+    """Aggregate repetition-level values with one coherent recovery definition.
+
+    ``recovery_time`` uses censored semantics whenever any run is censored
+    (``inf``/``nan``): ordinary means are never computed from values containing
+    ``inf``. All-recovered recovery input uses the ordinary summary; mixed
+    input uses the censored summary over recovered runs; all-censored input
+    reports an explicit censored result with no mean/CI; empty input preserves
+    the no-data shape.
+    """
     values = [m[name] for m in metrics_per_run if name in m and m[name] is not None]
     if not values:
         return {"n": 0.0}
+    if name == "recovery_time" and _has_censored([float(v) for v in values]):
+        censored: dict[str, Any] = dict(summarize_censored([float(v) for v in values], confidence))
+        censored["method"] = "censored_t_mean_ci"
+        censored["resampling_unit"] = "repetition"
+        censored["analysis_version"] = STAT_ANALYSIS_VERSION
+        try:
+            n_warn = int(censored.get("n_recovered", censored.get("count", 0)))
+        except (TypeError, ValueError):
+            n_warn = 0
+        censored["warnings"] = small_sample_note(n_warn)
+        censored["n"] = censored.get("count", 0.0)
+        return censored
     if use_bootstrap and len(values) >= 3:
         lo, hi = bootstrap_ci(values, confidence)
         mean_val = sum(values) / len(values)
@@ -71,14 +120,18 @@ def _pair_metric(
     a_runs: list[dict[str, Any]], b_runs: list[dict[str, Any]], metric: str
 ) -> dict[str, Any]:
     n = min(len(a_runs), len(b_runs))
-    avals = [m[metric] for m in a_runs[:n] if metric in m]
-    bvals = [m[metric] for m in b_runs[:n] if metric in m]
+    avals = [m[metric] for m in a_runs[:n] if metric in m and m[metric] is not None]
+    bvals = [m[metric] for m in b_runs[:n] if metric in m and m[metric] is not None]
     result_raw = paired_difference_summary(avals, bvals)
     result: dict[str, Any] = dict(result_raw)
     result["analysis_version"] = STAT_ANALYSIS_VERSION
     result["method"] = "paired_replicate"
     result["resampling_unit"] = "repetition"
-    result["warnings"] = small_sample_note(int(result.get("n", 0)))
+    try:
+        n_warn = int(result.get("n_paired_recovered", result.get("n", 0)))
+    except (TypeError, ValueError):
+        n_warn = 0
+    result["warnings"] = small_sample_note(n_warn)
     return result
 
 
@@ -112,11 +165,34 @@ def build_comparison(
             other_runs = other.get("metrics_per_run", [])
             entry: dict[str, Any] = {"versus": other.get("name", other.get("id"))}
             for metric in metrics:
-                a = [m[metric] for m in ref_runs if metric in m]
-                b = [m[metric] for m in other_runs if metric in m]
+                a = [m[metric] for m in ref_runs if metric in m and m[metric] is not None]
+                b = [m[metric] for m in other_runs if metric in m and m[metric] is not None]
                 n = min(len(a), len(b))
-                if n >= 2:
-                    entry[f"{metric}_cohens_d"] = cohens_d(a[:n], b[:n])
+                if metric == "recovery_time" and (
+                    _has_censored([float(v) for v in a[:n]])
+                    or _has_censored([float(v) for v in b[:n]])
+                ):
+                    entry[f"{metric}_cohens_d"] = None
+                    entry[f"{metric}_cohens_d_note"] = (
+                        "censored: Cohen's d undefined with unrecovered runs (inf); "
+                        "compare recovery_rate and recovered-only means instead"
+                    )
+                    a_rec, a_tot, a_rate = _recovery_rates([float(v) for v in a[:n]])
+                    b_rec, b_tot, b_rate = _recovery_rates([float(v) for v in b[:n]])
+                    entry[f"{metric}_recovery_rate_a"] = a_rate
+                    entry[f"{metric}_recovery_rate_b"] = b_rate
+                    entry[f"{metric}_n_recovered_a"] = a_rec
+                    entry[f"{metric}_n_recovered_b"] = b_rec
+                elif n >= 2:
+                    d = cohens_d(a[:n], b[:n])
+                    # Never propagate nan/inf into comparison JSON.
+                    if d != d or d == float("inf") or d == float("-inf"):
+                        entry[f"{metric}_cohens_d"] = None
+                        entry[f"{metric}_cohens_d_note"] = (
+                            "effect undefined for non-finite inputs; no number fabricated"
+                        )
+                    else:
+                        entry[f"{metric}_cohens_d"] = d
                 entry[f"{metric}_n"] = n
             effects.append(entry)
         comparison["effects"] = effects

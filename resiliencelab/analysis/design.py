@@ -122,6 +122,30 @@ def _mean(values: list[float]) -> float:
     return sum(values) / len(values)
 
 
+def _finite_only(values: list[float]) -> tuple[list[float], int, int]:
+    """Split values into finite (recovered) subset; returns (finite, n, n_recovered)."""
+    import math
+
+    finite: list[float] = []
+    for v in values:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(f):
+            finite.append(f)
+    return finite, len(values), len(finite)
+
+
+def _censored_cell_mean(values: list[float]) -> tuple[float | None, int, int, float]:
+    """Recovered-only mean for a cell; None when no recovered observations."""
+    finite, n, n_rec = _finite_only(values)
+    rate = (n_rec / n) if n else 0.0
+    if not finite:
+        return None, n, n_rec, rate
+    return sum(finite) / len(finite), n, n_rec, rate
+
+
 def main_effect(
     conditions: list[DesignCondition],
     observations: dict[str, list[float]],
@@ -131,15 +155,53 @@ def main_effect(
 
     ``effect`` is ``mean(level) - grand_mean`` for each level; for two levels
     the pairwise difference equals the spread between level effects.
+
+    Censored values (``inf``/``nan``, i.e. unrecovered recovery runs) never
+    enter arithmetic means: per-level means are recovered-only means. Cells
+    with no recovered observations report ``mean=None``/``effect=None`` with
+    an explicit note rather than a fabricated number.
     """
     grouped = group_by_factor(conditions, observations, factor)
-    levels = [
-        {"level": level, "n": len(vals), "mean": _mean(vals)} for level, vals in grouped.items()
-    ]
-    grand = _mean([level["mean"] for level in levels])
-    for level in levels:
-        level["effect"] = level["mean"] - grand
-    return {"factor": factor, "levels": levels, "grand_mean": grand}
+    levels: list[dict[str, Any]] = []
+    any_censored = False
+    for level, vals in grouped.items():
+        mean_val, n, n_rec, rate = _censored_cell_mean(vals)
+        if n_rec < n:
+            any_censored = True
+        entry: dict[str, Any] = {
+            "level": level,
+            "n": n,
+            "n_recovered": n_rec,
+            "recovery_rate": rate,
+            "mean": mean_val,
+        }
+        if mean_val is None:
+            if n == 0:
+                entry["note"] = "no observations"
+            else:
+                entry["note"] = f"no recovered observations (all {n} censored/unrecovered)"
+        elif n_rec < n:
+            entry["note"] = f"{n - n_rec}/{n} censored (inf excluded from mean)"
+        levels.append(entry)
+    defined = [lv["mean"] for lv in levels if lv.get("mean") is not None]
+    grand: float | None = (sum(defined) / len(defined)) if defined else None
+    for lv in levels:
+        if lv.get("mean") is not None and grand is not None:
+            lv["effect"] = float(lv["mean"]) - float(grand)
+        else:
+            lv["effect"] = None
+            if "note" in lv:
+                lv["note"] = str(lv["note"]) + "; effect undefined (censored)"
+            else:
+                lv["note"] = "effect undefined (censored cell with no recovered observations)"
+    result: dict[str, Any] = {"factor": factor, "levels": levels, "grand_mean": grand}
+    if any_censored:
+        result["censored"] = True
+        result["note"] = (
+            "censored values (inf) excluded from means; effects are conditional on "
+            "recovery (recovered-only means); cells with no recovered runs have mean/effect=null"
+        )
+    return result
 
 
 def interaction_effect(
@@ -148,7 +210,13 @@ def interaction_effect(
     factor_a: str,
     factor_b: str,
 ) -> dict[str, Any]:
-    """Two-way difference-of-differences interaction for two factors."""
+    """Two-way difference-of-differences interaction for two factors.
+
+    Censored values (``inf``/``nan``) never enter arithmetic means: cell means
+    are recovered-only means. When any cell has no recovered observations the
+    interaction is reported as ``None`` with an explicit note rather than a
+    fabricated number.
+    """
     a_levels_list: list[Any] = []
     for c in conditions:
         val = c.factors.get(factor_a)
@@ -170,17 +238,41 @@ def interaction_effect(
 
     lo_a, hi_a = sorted(a_levels_list, key=str)
     lo_b, hi_b = sorted(b_levels_list, key=str)
-    a0b0 = _mean(cell(lo_a, lo_b))
-    a1b0 = _mean(cell(hi_a, lo_b))
-    a0b1 = _mean(cell(lo_a, hi_b))
-    a1b1 = _mean(cell(hi_a, hi_b))
-    effect_at_b0 = a1b0 - a0b0
-    effect_at_b1 = a1b1 - a0b1
-    interaction = effect_at_b1 - effect_at_b0
-    return {
+    m00, n00, r00, _ = _censored_cell_mean(cell(lo_a, lo_b))
+    m10, n10, r10, _ = _censored_cell_mean(cell(hi_a, lo_b))
+    m01, n01, r01, _ = _censored_cell_mean(cell(lo_a, hi_b))
+    m11, n11, r11, _ = _censored_cell_mean(cell(hi_a, hi_b))
+    cells: dict[str, Any] = {
+        f"cell_{factor_a}={lo_a}_{factor_b}={lo_b}": {"mean": m00, "n": n00, "n_recovered": r00},
+        f"cell_{factor_a}={hi_a}_{factor_b}={lo_b}": {"mean": m10, "n": n10, "n_recovered": r10},
+        f"cell_{factor_a}={lo_a}_{factor_b}={hi_b}": {"mean": m01, "n": n01, "n_recovered": r01},
+        f"cell_{factor_a}={hi_a}_{factor_b}={hi_b}": {"mean": m11, "n": n11, "n_recovered": r11},
+    }
+    base: dict[str, Any] = {
         "factor_a": factor_a,
         "factor_b": factor_b,
-        f"effect_{factor_a}_given_{factor_b}={lo_b}": effect_at_b0,
-        f"effect_{factor_a}_given_{factor_b}={hi_b}": effect_at_b1,
-        "interaction": interaction,
+        "cells": cells,
     }
+    if m00 is None or m10 is None or m01 is None or m11 is None:
+        base[f"effect_{factor_a}_given_{factor_b}={lo_b}"] = None
+        base[f"effect_{factor_a}_given_{factor_b}={hi_b}"] = None
+        base["interaction"] = None
+        base["censored"] = True
+        base["note"] = (
+            "interaction undefined: at least one cell has no recovered observations "
+            "(all censored/unrecovered); no number fabricated; see cells for per-cell counts"
+        )
+        return base
+    effect_at_b0 = float(m10) - float(m00)
+    effect_at_b1 = float(m11) - float(m01)
+    interaction = effect_at_b1 - effect_at_b0
+    base[f"effect_{factor_a}_given_{factor_b}={lo_b}"] = effect_at_b0
+    base[f"effect_{factor_a}_given_{factor_b}={hi_b}"] = effect_at_b1
+    base["interaction"] = interaction
+    if r00 < n00 or r10 < n10 or r01 < n01 or r11 < n11:
+        base["censored"] = True
+        base["note"] = (
+            "censored values (inf) excluded; effects are conditional on recovery "
+            "(recovered-only cell means)"
+        )
+    return base
