@@ -29,3 +29,24 @@ resiliencelab benchmark RL-BENCH-005 --repetitions 5
 
 Configs live in `benchmarks/` and are ordinary experiment files, so any
 benchmark can be edited, validated, and reproduced like any other experiment.
+
+The authoritative research mapping (hypothesis, research questions, expected
+metrics, factorial factors, status) lives in
+`resiliencelab/experiments/catalog.py` and is derived mechanically from the
+YAMLs; `tests/test_benchmark_catalog.py` fails CI on duplicates, malformed
+YAMLs, count drift, or missing paper IDs.
+
+Notes:
+
+- RL-BENCH-017 and RL-BENCH-018 are single-cell **base configs** for factorial
+  analysis, not expanded factorial designs by themselves. Run `matrix` to
+  expand factors; per-condition bundles land under
+  `results/<base-id>/conditions/<condition_id>/`.
+- RL-BENCH-004 exercises client-side concurrency plus the saturation-delay
+  fault, not service-side capacity (which has no block in that YAML).
+- RL-BENCH-006 short-circuits on the first failure, sparing downstream
+  services; "cascade" here means staged short-circuit, not propagation.
+- RL-BENCH-013/014 isolation is observable at event/service level; primary
+  comparison metrics remain global.
+- All 18 benchmarks use `closed_loop` workloads; RQ6 workload sensitivity is
+  therefore limited (see `paper/outline.md`).
