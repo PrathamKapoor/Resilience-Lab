@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -352,8 +353,14 @@ def matrix(
     store: Annotated[str | None, typer.Option()] = None,
     metric: Annotated[str, typer.Option(help="Metric for main effects")] = "availability",
 ) -> None:
-    spec = load_yaml(path)
-    factor_map = _load_factors(factors) if factors else None
+    try:
+        spec = load_yaml(path)
+    except (ConfigValidationError, OSError) as exc:
+        _err(str(exc))
+    try:
+        factor_map = _load_factors(factors) if factors else None
+    except (ConfigValidationError, OSError) as exc:
+        _err(str(exc))
     from resiliencelab.analysis.design import build_design, interaction_effect, main_effect
     from resiliencelab.experiments.factorial import CORE_FACTORS
     from resiliencelab.experiments.matrix import (
@@ -363,7 +370,14 @@ def matrix(
     )
 
     effective_factors = factor_map or CORE_FACTORS
-    conditions = build_design(spec, effective_factors)
+    try:
+        conditions = build_design(spec, effective_factors)
+    except (ValueError, ConfigValidationError) as exc:
+        _err(f"invalid matrix design: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        # Pydantic ValidationError for invalid factor levels surfaces here;
+        # report as a design error rather than a raw traceback.
+        _err(f"invalid matrix design: {exc}")
     console.print(f"Generated {len(conditions)} experiment conditions")
     store_root = _store_for(store)
     base_dir = store_root / spec.id
@@ -371,100 +385,156 @@ def matrix(
     entries: list[dict[str, Any]] = []
     observations: dict[str, dict[str, list[float]]] = {}
     condition_manifests: dict[str, Any] = {}
-    for condition in conditions:
-        condition_spec = condition_spec_for(spec, condition)
-
-        console.print(f"  running {condition.condition_id} ...")
-        result = _run_spec(condition_spec)
-        dest = condition_dir(store_root, spec.id, condition.condition_id)
-        manifest = write_artifacts(result, dest)
-        (dest / "condition.json").write_text(
-            json.dumps(
-                condition_metadata(spec, condition, condition_spec.id),
-                indent=2,
-                default=str,
-            ),
-            encoding="utf-8",
-        )
-        condition_manifests[condition.condition_id] = {
-            "spec_id": condition_spec.id,
-            "artifact_dir": f"conditions/{condition.condition_id}",
-            "manifest": manifest,
-        }
-        entry = result.as_comparison_entry()
-        entry["condition_id"] = condition.condition_id
-        entry["spec_id"] = condition_spec.id
-        entry["artifact_dir"] = f"conditions/{condition.condition_id}"
-        entries.append(entry)
-        for row in entry["metrics_per_run"]:
-            for metric_name, value in row.items():
-                observations.setdefault(metric_name, {}).setdefault(
-                    condition.condition_id, []
-                ).append(float(value))
+    begun = False
 
     from resiliencelab.analysis.comparison import build_comparison
 
-    comparison = build_comparison(entries)
-    comparison_path = base_dir / "matrix_comparison.json"
-    comparison_path.write_text(json.dumps(comparison, indent=2, default=str), encoding="utf-8")
+    def _finalize_matrix() -> int:
+        comparison = build_comparison(entries)
+        comparison_path = base_dir / "matrix_comparison.json"
+        comparison_path.write_text(json.dumps(comparison, indent=2, default=str), encoding="utf-8")
+        design_doc = {
+            "analysis_version": comparison.get("analysis_version"),
+            "base_experiment": spec.id,
+            "factors": effective_factors,
+            "conditions": [
+                {
+                    "condition_id": c.condition_id,
+                    "index": c.index,
+                    "factors": c.factors,
+                    "label": c.label(),
+                    "spec_id": f"{spec.id}_{c.condition_id}",
+                    "artifact_dir": f"conditions/{c.condition_id}",
+                }
+                for c in conditions
+            ],
+        }
+        design_path = base_dir / "matrix_design.json"
+        design_path.write_text(json.dumps(design_doc, indent=2, default=str), encoding="utf-8")
+        effects: dict[str, Any] = {}
+        condition_observations = observations.get(metric, {})
+        effects["metric"] = metric
+        effects["main_effects"] = [
+            main_effect(conditions, condition_observations, factor) for factor in effective_factors
+        ]
+        factor_names = list(effective_factors)
+        from resiliencelab.experiments.matrix import binary_factor_pairs
 
-    design_doc = {
-        "analysis_version": comparison.get("analysis_version"),
-        "base_experiment": spec.id,
-        "factors": effective_factors,
-        "conditions": [
-            {
-                "condition_id": c.condition_id,
-                "index": c.index,
-                "factors": c.factors,
-                "label": c.label(),
-                "spec_id": f"{spec.id}_{c.condition_id}",
-                "artifact_dir": f"conditions/{c.condition_id}",
+        binary_pairs = binary_factor_pairs(factor_names, conditions)
+        for fa, fb in binary_pairs:
+            key = f"interaction_{fa}_x_{fb}"
+            try:
+                effects[key] = interaction_effect(conditions, condition_observations, fa, fb)
+            except ValueError:
+                continue
+        effects_path = base_dir / "matrix_effects.json"
+        effects_path.write_text(json.dumps(effects, indent=2, default=str), encoding="utf-8")
+        n_ok = sum(1 for v in condition_manifests.values() if v.get("status") == "ok")
+        n_failed = sum(1 for v in condition_manifests.values() if v.get("status") == "failed")
+        n_cancelled = sum(1 for v in condition_manifests.values() if v.get("status") == "cancelled")
+        matrix_manifest = {
+            "base_experiment": spec.id,
+            "factors": effective_factors,
+            "condition_count": len(conditions),
+            "succeeded": n_ok,
+            "failed": n_failed,
+            "cancelled": n_cancelled,
+            "conditions": condition_manifests,
+            "files": {
+                "matrix_design.json": "matrix_design.json",
+                "matrix_comparison.json": "matrix_comparison.json",
+                "matrix_effects.json": "matrix_effects.json",
+            },
+        }
+        matrix_manifest_path = base_dir / "matrix_manifest.json"
+        matrix_manifest_path.write_text(
+            json.dumps(matrix_manifest, indent=2, default=str), encoding="utf-8"
+        )
+        console.print(f"Comparison written to {comparison_path.resolve()}")
+        console.print(f"Design written to {design_path.resolve()}")
+        console.print(f"Effects written to {effects_path.resolve()}")
+        console.print(f"Matrix manifest written to {matrix_manifest_path.resolve()}")
+        return n_failed
+
+    try:
+        for condition in conditions:
+            begun = True
+            try:
+                condition_spec = condition_spec_for(spec, condition)
+            except Exception as exc:  # noqa: BLE001
+                condition_manifests[condition.condition_id] = {
+                    "status": "failed",
+                    "condition_id": condition.condition_id,
+                    "spec_id": None,
+                    "artifact_dir": f"conditions/{condition.condition_id}",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+                console.print(f"  failed {condition.condition_id}: {exc}")
+                continue
+            console.print(f"  running {condition.condition_id} ...")
+            try:
+                result = _run_spec(condition_spec)
+            except Exception as exc:  # noqa: BLE001
+                condition_manifests[condition.condition_id] = {
+                    "status": "failed",
+                    "condition_id": condition.condition_id,
+                    "spec_id": condition_spec.id,
+                    "artifact_dir": f"conditions/{condition.condition_id}",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+                console.print(f"  failed {condition.condition_id}: {exc}")
+                continue
+            dest = condition_dir(store_root, spec.id, condition.condition_id)
+            try:
+                metadata = condition_metadata(spec, condition, condition_spec.id)
+                manifest = write_artifacts(result, dest, condition=metadata)
+            except Exception as exc:  # noqa: BLE001
+                condition_manifests[condition.condition_id] = {
+                    "status": "failed",
+                    "condition_id": condition.condition_id,
+                    "spec_id": condition_spec.id,
+                    "artifact_dir": f"conditions/{condition.condition_id}",
+                    "error_type": type(exc).__name__,
+                    "error": f"artifact write failed: {exc}",
+                }
+                console.print(f"  failed {condition.condition_id}: {exc}")
+                continue
+            status = "cancelled" if result.cancelled else "ok"
+            record_entry: dict[str, Any] = {
+                "status": status,
+                "condition_id": condition.condition_id,
+                "spec_id": condition_spec.id,
+                "artifact_dir": f"conditions/{condition.condition_id}",
+                "manifest": manifest,
             }
-            for c in conditions
-        ],
-    }
-    design_path = base_dir / "matrix_design.json"
-    design_path.write_text(json.dumps(design_doc, indent=2, default=str), encoding="utf-8")
-
-    effects: dict[str, Any] = {}
-    condition_observations = observations.get(metric, {})
-    effects["metric"] = metric
-    effects["main_effects"] = [
-        main_effect(conditions, condition_observations, factor) for factor in effective_factors
-    ]
-    binary_pairs = []
-    factor_names = list(effective_factors)
-    from resiliencelab.experiments.matrix import binary_factor_pairs
-
-    binary_pairs = binary_factor_pairs(factor_names, conditions)
-    for fa, fb in binary_pairs:
-        key = f"interaction_{fa}_x_{fb}"
-        try:
-            effects[key] = interaction_effect(conditions, condition_observations, fa, fb)
-        except ValueError:
-            continue
-    effects_path = base_dir / "matrix_effects.json"
-    effects_path.write_text(json.dumps(effects, indent=2, default=str), encoding="utf-8")
-    matrix_manifest = {
-        "base_experiment": spec.id,
-        "factors": effective_factors,
-        "condition_count": len(conditions),
-        "conditions": condition_manifests,
-        "files": {
-            "matrix_design.json": "matrix_design.json",
-            "matrix_comparison.json": "matrix_comparison.json",
-            "matrix_effects.json": "matrix_effects.json",
-        },
-    }
-    matrix_manifest_path = base_dir / "matrix_manifest.json"
-    matrix_manifest_path.write_text(
-        json.dumps(matrix_manifest, indent=2, default=str), encoding="utf-8"
-    )
-    console.print(f"Comparison written to {comparison_path.resolve()}")
-    console.print(f"Design written to {design_path.resolve()}")
-    console.print(f"Effects written to {effects_path.resolve()}")
-    console.print(f"Matrix manifest written to {matrix_manifest_path.resolve()}")
+            if result.cancelled:
+                record_entry["cancellation_reason"] = result.cancellation_reason
+            condition_manifests[condition.condition_id] = record_entry
+            entry = result.as_comparison_entry()
+            entry["condition_id"] = condition.condition_id
+            entry["spec_id"] = condition_spec.id
+            entry["artifact_dir"] = f"conditions/{condition.condition_id}"
+            entries.append(entry)
+            for row in entry["metrics_per_run"]:
+                for metric_name, value in row.items():
+                    observations.setdefault(metric_name, {}).setdefault(
+                        condition.condition_id, []
+                    ).append(float(value))
+    except BaseException:
+        if begun:
+            with contextlib.suppress(Exception):
+                _finalize_matrix()
+        raise
+    if begun:
+        n_failed_final = _finalize_matrix()
+        if n_failed_final:
+            console.print(
+                f"[yellow]{n_failed_final} condition(s) failed; "
+                "see matrix_manifest.json for per-condition errors[/yellow]"
+            )
+            raise typer.Exit(code=1)
 
 
 def _load_factors(path: str) -> dict[str, Any]:

@@ -1,4 +1,4 @@
-"""Immutable experiment artifact bundling with cryptographic hashing."""
+"""Content-integrity experiment artifact bundling with manifest hashing."""
 
 from __future__ import annotations
 
@@ -20,7 +20,19 @@ def _write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
 
 
-def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
+def write_artifacts(
+    result: ExperimentResult,
+    base_dir: Path | str,
+    condition: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Write a content-integrity artifact bundle with a manifest hash.
+
+    Every scientific/provenance file (configuration, experiment, raw records,
+    timelines, statistics, report, and matrix ``condition.json`` when given) is
+    recorded in the manifest before the manifest itself is written. ``condition``
+    must be provided for matrix-condition bundles so ``condition.json`` is
+    written before final manifest generation and covered by hashing.
+    """
     base = Path(base_dir)
     raw_dir = base / "raw"
     analysis_dir = base / "analysis"
@@ -31,11 +43,15 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
     manifest_files: dict[str, str] = {}
 
     def record(name: str, content: bytes) -> None:
-        (base / name).write_bytes(content)
+        target = base / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
         manifest_files[name] = hash_bytes(content)
 
     record("configuration.yaml", dump_yaml(result.experiment).encode("utf-8"))
     record("environment.json", json.dumps(result.environment, indent=2).encode("utf-8"))
+    if condition is not None:
+        record("condition.json", json.dumps(condition, indent=2, default=str).encode("utf-8"))
 
     recovery = result.recovery_provenance()
     summary = {
@@ -64,7 +80,10 @@ def write_artifacts(result: ExperimentResult, base_dir: Path) -> dict[str, Any]:
         jsonl = "\n".join(json.dumps(r, default=str) for r in run.records)
         record(f"raw/records-{index}.jsonl", jsonl.encode("utf-8"))
         all_records.extend(run.records)
-        _write_json(analysis_dir / f"timeline-{index}.json", run.timeline)
+        record(
+            f"analysis/timeline-{index}.json",
+            json.dumps(run.timeline, indent=2, default=str).encode("utf-8"),
+        )
 
     raw_hash = hash_records(all_records)
     record("raw/records-hash.txt", f"{raw_hash}\n".encode())
@@ -169,6 +188,12 @@ def verify_artifacts(base_dir: Path) -> dict[str, Any]:
                 rel = f"{subdir}/{f.name}"
                 if rel not in tracked_files:
                     warnings.append(f"untracked file: {rel}")
+    # Bundle-root scientific/provenance files (e.g. matrix condition.json)
+    # must also be tracked; runtime/cache files are intentionally ignored.
+    for bundle_root_file in ("condition.json",):
+        candidate = base / bundle_root_file
+        if candidate.exists() and bundle_root_file not in tracked_files:
+            warnings.append(f"untracked file: {bundle_root_file}")
 
     return {
         "valid": len(errors) == 0,
