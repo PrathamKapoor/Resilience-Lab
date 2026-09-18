@@ -17,6 +17,8 @@ poetry.lock
 
 # Test / coverage
 .pytest_cache/
+.pytest-tmp/
+.pytest_temp/
 .coverage
 .coverage.*
 htmlcov/
