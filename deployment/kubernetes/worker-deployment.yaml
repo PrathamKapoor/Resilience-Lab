@@ -1,18 +1,18 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: resiliencelab-api
+  name: resiliencelab-worker
   labels:
-    app: resiliencelab-api
+    app: resiliencelab-worker
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
-      app: resiliencelab-api
+      app: resiliencelab-worker
   template:
     metadata:
       labels:
-        app: resiliencelab-api
+        app: resiliencelab-worker
     spec:
       securityContext:
         runAsNonRoot: true
@@ -20,19 +20,13 @@ spec:
         runAsGroup: 10001
         fsGroup: 10001
       containers:
-        - name: api
+        - name: worker
           image: resiliencelab:0.1.0
-          ports:
-            - containerPort: 8000
+          command: ["python", "-m", "resiliencelab.controlplane.worker_cli"]
           envFrom:
             - configMapRef:
                 name: resiliencelab-config
           env:
-            - name: RESILIENCELAB_API_KEYS
-              valueFrom:
-                secretKeyRef:
-                  name: resiliencelab-secrets
-                  key: api-keys
             - name: RESILIENCELAB_DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -55,16 +49,6 @@ spec:
             limits:
               cpu: "2000m"
               memory: "2Gi"
-          readinessProbe:
-            httpGet:
-              path: /api/v1/ready
-              port: 8000
-            periodSeconds: 15
-          livenessProbe:
-            httpGet:
-              path: /api/v1/health
-              port: 8000
-            periodSeconds: 30
           volumeMounts:
             - name: data
               mountPath: /data

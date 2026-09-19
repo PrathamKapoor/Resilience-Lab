@@ -4,3 +4,5 @@ metadata:
   name: resiliencelab-config
 data:
   RESILIENCELAB_STORE: /data/results
+  RESILIENCELAB_SERVER_MODE: "true"
+  RESILIENCELAB_AUTH_MODE: api_key
