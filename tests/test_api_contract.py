@@ -292,6 +292,18 @@ class TestAuthAPIKeyMode:
         )
         assert resp.status_code == 201
 
+    def test_configured_api_key_header_is_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("RESILIENCELAB_API_KEY_HEADER", "X-Resilience-Key")
+        client = self._make_client(monkeypatch)
+
+        resp = client.post(
+            "/api/v1/experiments",
+            json={"config": _tiny_config("ak-custom")},
+            headers={"X-Resilience-Key": "test-key-1"},
+        )
+
+        assert resp.status_code == 201
+
     def test_invalid_key_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         client = self._make_client(monkeypatch)
         resp = client.post(

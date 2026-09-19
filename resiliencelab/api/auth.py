@@ -13,11 +13,13 @@ Configuration via environment variables:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import os
 from dataclasses import dataclass
 
-from fastapi import Depends, Header, HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +63,6 @@ def validate_server_auth_configuration() -> None:
 
 async def get_identity(
     request: Request,
-    authorization: str | None = Header(default=None),
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> Identity:
     """FastAPI dependency that resolves caller identity.
 
@@ -89,23 +89,25 @@ async def get_identity(
         method = "none"
 
         # Try Authorization: Bearer <key>
+        authorization = request.headers.get("Authorization")
         if authorization and authorization.lower().startswith("bearer "):
             key = authorization[7:].strip()
             method = "bearer"
 
-        # Try X-API-Key header
-        if key is None and x_api_key:
-            key = x_api_key.strip()
+        # Try the configured API-key header.
+        configured_key = request.headers.get(_resolve_api_key_header())
+        if key is None and configured_key:
+            key = configured_key.strip()
             method = "api_key"
 
-        if key is None or key not in valid_keys:
+        if key is None or not any(hmac.compare_digest(key, valid) for valid in valid_keys):
             raise HTTPException(
                 status_code=401,
                 detail="Invalid or missing API key",
             )
 
-        # Derive a stable user_id from the key (first 8 chars as pseudonym)
-        user_id = f"key-{key[:8]}"
+        # Keep a stable owner identity without exposing key material in records.
+        user_id = f"key-{hashlib.sha256(key.encode()).hexdigest()[:16]}"
         return Identity(user_id=user_id, auth_method=method)
 
     # Unknown auth mode
