@@ -18,6 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, HTTPException,
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
+from resiliencelab import __version__
 from resiliencelab.api.auth import (
     Identity,
     get_identity,
@@ -225,7 +226,7 @@ def create_app(runtime: LocalRuntime | None = None, server_mode: bool | None = N
     use_server = server_mode if server_mode is not None else _is_server_mode()
     app = FastAPI(
         title="ResilienceLab API",
-        version="0.4.0",
+        version=__version__,
         description=(
             "Control-plane API for reproducible resilience experiments. "
             "The API manages lifecycle; ExperimentRunner executes scientific simulations."
@@ -260,7 +261,7 @@ def create_app(runtime: LocalRuntime | None = None, server_mode: bool | None = N
         return LivenessResponse(
             status=HealthStatus.OK,
             server_mode=use_server,
-            version="0.4.0",
+            version=__version__,
         )
 
     @v1.get("/ready", response_model=ReadinessResponse, tags=["health"])

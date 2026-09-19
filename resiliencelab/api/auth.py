@@ -56,9 +56,7 @@ def validate_server_auth_configuration() -> None:
             "anonymous authentication is only supported in local mode"
         )
     if not _resolve_api_keys():
-        raise RuntimeError(
-            "Server mode requires at least one API key in RESILIENCELAB_API_KEYS"
-        )
+        raise RuntimeError("Server mode requires at least one API key in RESILIENCELAB_API_KEYS")
 
 
 async def get_identity(

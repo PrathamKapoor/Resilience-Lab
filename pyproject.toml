@@ -72,9 +72,10 @@ dev = [
 resiliencelab = "resiliencelab.cli.app:main"
 
 [project.urls]
-Homepage = "https://github.com/example/resiliencelab"
-Documentation = "https://github.com/example/resiliencelab"
-Repository = "https://github.com/example/resiliencelab"
+Homepage = "https://github.com/PrathamKapoor/Resilience-Lab"
+Documentation = "https://github.com/PrathamKapoor/Resilience-Lab/tree/main/docs"
+Repository = "https://github.com/PrathamKapoor/Resilience-Lab"
+Issues = "https://github.com/PrathamKapoor/Resilience-Lab/issues"
 
 [tool.setuptools.packages.find]
 include = ["resiliencelab*"]
