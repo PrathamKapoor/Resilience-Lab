@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: resiliencelab-migrate
+  labels:
+    app: resiliencelab-migrate
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: resiliencelab-migrate
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: migrate
+          image: resiliencelab:0.1.0
+          command: ["alembic", "upgrade", "head"]
+          env:
+            - name: RESILIENCELAB_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: resiliencelab-secrets
+                  key: database-url
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true

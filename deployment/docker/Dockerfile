@@ -4,8 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-RUN addgroup --system resiliencelab \
-    && adduser --system --ingroup resiliencelab resiliencelab \
+RUN addgroup --system --gid 10001 resiliencelab \
+    && adduser --system --uid 10001 --ingroup resiliencelab resiliencelab \
     && mkdir -p /data \
     && chown resiliencelab:resiliencelab /data
 

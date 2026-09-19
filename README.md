@@ -64,7 +64,8 @@ make test
 docker compose -f deployment/docker-compose.yml up
 ```
 
-Kubernetes manifests live in `deployment/kubernetes/`.
+Kubernetes manifests and their required external services are documented in
+[`deployment/kubernetes/README.md`](deployment/kubernetes/README.md).
 
 ## Repository layout
 
