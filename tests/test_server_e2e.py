@@ -58,6 +58,9 @@ def _configure_server_auth(monkeypatch: pytest.MonkeyPatch) -> None:
 if _infra_available:
     from resiliencelab.controlplane.models import Base
 
+    # Clear queued jobs before replacing the database schema. Otherwise a worker
+    # can claim a job whose experiment row was removed by drop_all().
+    r_client.flushdb()
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
 
