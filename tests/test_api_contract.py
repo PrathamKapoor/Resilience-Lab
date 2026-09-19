@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from resiliencelab import __version__
 from resiliencelab.api.app import LocalRuntime, create_app
 
 # ---------------------------------------------------------------------------
@@ -47,6 +48,11 @@ class TestAPIContract:
         assert body["status"] == "ok"
         assert "server_mode" in body
         assert "version" in body
+
+    def test_health_version_matches_the_package_version(self) -> None:
+        client = _runtime_client()
+
+        assert client.get("/api/v1/health").json()["version"] == __version__
 
     def test_readiness_local_mode(self) -> None:
         client = _runtime_client()
