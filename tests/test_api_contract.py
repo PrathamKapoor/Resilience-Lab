@@ -219,6 +219,28 @@ class TestCorrelationIDs:
 # ---------------------------------------------------------------------------
 
 
+class TestServerAuthenticationConfiguration:
+    def test_server_mode_rejects_anonymous_authentication(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("RESILIENCELAB_AUTH_MODE", raising=False)
+        monkeypatch.delenv("RESILIENCELAB_API_KEYS", raising=False)
+
+        with pytest.raises(RuntimeError, match="RESILIENCELAB_AUTH_MODE=api_key"):
+            create_app(server_mode=True)
+
+    def test_server_mode_requires_at_least_one_api_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from resiliencelab.api.auth import validate_server_auth_configuration
+
+        monkeypatch.setenv("RESILIENCELAB_AUTH_MODE", "api_key")
+        monkeypatch.delenv("RESILIENCELAB_API_KEYS", raising=False)
+
+        with pytest.raises(RuntimeError, match="RESILIENCELAB_API_KEYS"):
+            validate_server_auth_configuration()
+
+
 class TestAuthNoneMode:
     def test_none_mode_allows_all_requests(self) -> None:
         client = _runtime_client()

@@ -48,6 +48,19 @@ def _resolve_api_key_header() -> str:
     return os.environ.get("RESILIENCELAB_API_KEY_HEADER", "X-API-Key")
 
 
+def validate_server_auth_configuration() -> None:
+    """Ensure server mode cannot start with anonymous access enabled."""
+    if _resolve_auth_mode() != "api_key":
+        raise RuntimeError(
+            "Server mode requires RESILIENCELAB_AUTH_MODE=api_key; "
+            "anonymous authentication is only supported in local mode"
+        )
+    if not _resolve_api_keys():
+        raise RuntimeError(
+            "Server mode requires at least one API key in RESILIENCELAB_API_KEYS"
+        )
+
+
 async def get_identity(
     request: Request,
     authorization: str | None = Header(default=None),
