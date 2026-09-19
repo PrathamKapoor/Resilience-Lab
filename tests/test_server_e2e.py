@@ -227,6 +227,29 @@ class TestE2ESubmitComplete:
             assert "path" in f
             assert len(f["sha256"]) == 64
 
+    def test_api_reads_completed_artifacts(self) -> None:
+        client = _make_client()
+        exp_id = _next_id("read")
+        client.post("/api/v1/experiments", json={"config": _tiny_config(exp_id)})
+        final = _wait_for_status(client, exp_id, {"COMPLETED", "FAILED"})
+        assert final == "COMPLETED"
+
+        metrics = client.get(f"/api/v1/experiments/{exp_id}/metrics")
+        assert metrics.status_code == 200
+        assert metrics.json()["metrics_per_run"]
+
+        timeline = client.get(f"/api/v1/experiments/{exp_id}/timeline")
+        assert timeline.status_code == 200
+        assert timeline.json()["timeline"]
+
+        report = client.get(f"/api/v1/experiments/{exp_id}/report")
+        assert report.status_code == 200
+        assert exp_id in report.text
+
+        analysis = client.get(f"/api/v1/experiments/{exp_id}/analysis")
+        assert analysis.status_code == 200
+        assert analysis.json()["analysis"]
+
 
 # ---------------------------------------------------------------------------
 # E2E 2: Submit -> Cancel

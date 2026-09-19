@@ -10,8 +10,10 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
@@ -215,6 +217,27 @@ def _check_ownership(record: Any, identity: Identity) -> None:
         return
     if record.owner_id != identity.user_id:
         raise HTTPException(status_code=403, detail="access denied")
+
+
+def _server_artifact_bases(db: Session, record: Any) -> list[Path]:
+    """Return artifact bundles for completed runs in stable run-index order."""
+    paths = [
+        Path(str(run.artifact_path))
+        for run in db_get_runs(db, record.experiment_id)
+        if run.artifact_path
+    ]
+    if not paths and record.artifact_path:
+        paths = [Path(str(record.artifact_path))]
+    if not paths:
+        raise HTTPException(status_code=404, detail="no artifacts available for this experiment")
+    return paths
+
+
+def _artifact_file_or_404(base: Path, relative_path: str) -> Path:
+    target = base / relative_path
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"artifact file not found: {relative_path}")
+    return target
 
 
 # ---------------------------------------------------------------------------
@@ -724,48 +747,92 @@ def _register_server_routes(v1: APIRouter) -> None:
 
     @v1.get(
         "/experiments/{experiment_id}/metrics",
-        responses={404: {"model": ErrorResponse}, 501: {"model": ErrorResponse}},
+        response_model=MetricsPerRunResponse,
+        responses={404: {"model": ErrorResponse}},
         tags=["experiments"],
     )
-    async def experiment_metrics(experiment_id: str) -> dict[str, Any]:
-        raise HTTPException(
-            status_code=501,
-            detail="metrics endpoint requires local results; use artifacts instead",
-        )
+    async def experiment_metrics(
+        experiment_id: str, identity: Identity = Depends(get_identity)
+    ) -> MetricsPerRunResponse:
+        _validate_experiment_id(experiment_id)
+        db = _db_session()
+        try:
+            record = _require_experiment(db, experiment_id)
+            _check_ownership(record, identity)
+            metrics: list[dict[str, float]] = []
+            for base in _server_artifact_bases(db, record):
+                summary = json.loads(_artifact_file_or_404(base, "experiment.json").read_text())
+                metrics.extend(summary["metrics_per_run"])
+            return MetricsPerRunResponse(metrics_per_run=metrics)
+        finally:
+            db.close()
 
     @v1.get(
         "/experiments/{experiment_id}/timeline",
-        responses={404: {"model": ErrorResponse}, 501: {"model": ErrorResponse}},
+        response_model=TimelineResponse,
+        responses={404: {"model": ErrorResponse}},
         tags=["experiments"],
     )
-    async def experiment_timeline(experiment_id: str) -> dict[str, Any]:
-        raise HTTPException(
-            status_code=501,
-            detail="timeline endpoint requires local results; use artifacts instead",
-        )
+    async def experiment_timeline(
+        experiment_id: str, identity: Identity = Depends(get_identity)
+    ) -> TimelineResponse:
+        _validate_experiment_id(experiment_id)
+        db = _db_session()
+        try:
+            record = _require_experiment(db, experiment_id)
+            _check_ownership(record, identity)
+            timelines = [
+                json.loads(_artifact_file_or_404(base, "analysis/timeline-0.json").read_text())
+                for base in _server_artifact_bases(db, record)
+            ]
+            return TimelineResponse(timeline=timelines)
+        finally:
+            db.close()
 
     @v1.get(
         "/experiments/{experiment_id}/report",
         response_class=PlainTextResponse,
-        responses={404: {"model": ErrorResponse}, 501: {"model": ErrorResponse}},
+        responses={404: {"model": ErrorResponse}},
         tags=["experiments"],
     )
-    async def experiment_report(experiment_id: str) -> str:
-        raise HTTPException(
-            status_code=501,
-            detail="report endpoint requires local results; use artifacts instead",
-        )
+    async def experiment_report(
+        experiment_id: str, identity: Identity = Depends(get_identity)
+    ) -> str:
+        _validate_experiment_id(experiment_id)
+        db = _db_session()
+        try:
+            record = _require_experiment(db, experiment_id)
+            _check_ownership(record, identity)
+            reports = [
+                _artifact_file_or_404(base, "report/report.md").read_text()
+                for base in _server_artifact_bases(db, record)
+            ]
+            return "\n\n".join(reports)
+        finally:
+            db.close()
 
     @v1.get(
         "/experiments/{experiment_id}/analysis",
-        responses={404: {"model": ErrorResponse}, 501: {"model": ErrorResponse}},
+        response_model=AnalysisResponse,
+        responses={404: {"model": ErrorResponse}},
         tags=["experiments"],
     )
-    async def experiment_analysis(experiment_id: str) -> dict[str, Any]:
-        raise HTTPException(
-            status_code=501,
-            detail="analysis endpoint requires local results; use artifacts instead",
-        )
+    async def experiment_analysis(
+        experiment_id: str, identity: Identity = Depends(get_identity)
+    ) -> AnalysisResponse:
+        _validate_experiment_id(experiment_id)
+        db = _db_session()
+        try:
+            record = _require_experiment(db, experiment_id)
+            _check_ownership(record, identity)
+            analyses = [
+                json.loads(_artifact_file_or_404(base, "analysis/statistics.json").read_text())
+                for base in _server_artifact_bases(db, record)
+            ]
+            analysis: Any = analyses[0] if len(analyses) == 1 else {"runs": analyses}
+            return AnalysisResponse(analysis=analysis)
+        finally:
+            db.close()
 
 
 # ---------------------------------------------------------------------------
