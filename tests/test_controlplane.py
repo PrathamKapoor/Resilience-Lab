@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 import redis
@@ -206,6 +207,19 @@ class TestModels:
         runs = get_runs(session, "exp_runs")
         assert len(runs) == 1
         assert runs[0].seed == 42
+
+
+class TestWorkerArtifactStorage:
+    def test_artifact_directory_uses_configured_store(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from resiliencelab.controlplane.worker import artifact_directory
+
+        monkeypatch.setenv("RESILIENCELAB_STORE", str(tmp_path))
+
+        assert artifact_directory("experiment-1", "run-1") == (
+            tmp_path / "experiment-1" / "runs" / "run-1"
+        )
 
 
 class TestQueue:
