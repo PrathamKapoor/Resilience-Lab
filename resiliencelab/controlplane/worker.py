@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import os
 import signal
 import threading
 import uuid
@@ -46,6 +47,12 @@ from resiliencelab.experiments.runner import ExperimentRunner
 logger = logging.getLogger(__name__)
 
 _running = True
+
+
+def artifact_directory(experiment_id: str, run_id: str) -> Path:
+    """Return the configured shared storage location for one run's artifacts."""
+    store = Path(os.environ.get("RESILIENCELAB_STORE", "results"))
+    return store / experiment_id / "runs" / run_id
 
 
 def _handle_signal(signum: int, frame: object) -> None:
@@ -199,14 +206,14 @@ def _process_job(
 
         # Check if cancellation was the cause
         if result.cancelled:
-            artifact_dir = f"results/{payload.experiment_id}/runs/{payload.run_id}"
-            write_artifacts(result, Path(artifact_dir))
+            artifact_dir = artifact_directory(payload.experiment_id, payload.run_id)
+            write_artifacts(result, artifact_dir)
 
             run_record = session.get(RunRecord, payload.run_id)
             if run_record and run_record.status not in ("COMPLETED", "FAILED", "CANCELLED"):
                 run_record.status = "CANCELLED"  # type: ignore[assignment]
                 run_record.completed_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
-                run_record.artifact_path = artifact_dir  # type: ignore[assignment]
+                run_record.artifact_path = str(artifact_dir)  # type: ignore[assignment]
                 reason_str: str = result.cancellation_reason or "worker cancelled"
                 run_record.cancellation_reason = reason_str  # type: ignore[assignment]
                 run_record.cancelled_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
@@ -214,18 +221,18 @@ def _process_job(
             mark_cancelled(session, payload.experiment_id, result.cancellation_reason)
             session.commit()
 
-            complete_job(r, payload.run_id, "CANCELLED", artifact_dir)
+            complete_job(r, payload.run_id, "CANCELLED", str(artifact_dir))
             logger.info("Cancelled job %s", payload.run_id)
             return
 
-        artifact_dir = f"results/{payload.experiment_id}/runs/{payload.run_id}"
-        write_artifacts(result, Path(artifact_dir))
+        artifact_dir = artifact_directory(payload.experiment_id, payload.run_id)
+        write_artifacts(result, artifact_dir)
 
         run_record = session.get(RunRecord, payload.run_id)
         if run_record and run_record.status not in ("COMPLETED", "FAILED", "CANCELLED"):
             run_record.status = "COMPLETED"  # type: ignore[assignment]
             run_record.completed_at = dt.datetime.now(dt.UTC)  # type: ignore[assignment]
-            run_record.artifact_path = artifact_dir  # type: ignore[assignment]
+            run_record.artifact_path = str(artifact_dir)  # type: ignore[assignment]
 
         all_runs = (
             session.execute(
@@ -236,18 +243,17 @@ def _process_job(
         )
         if all(r.status == "COMPLETED" for r in all_runs):
             update_experiment_status(
-                session, payload.experiment_id, "COMPLETED", artifact_path=artifact_dir
+                session, payload.experiment_id, "COMPLETED", artifact_path=str(artifact_dir)
             )
 
         session.commit()
-        complete_job(r, payload.run_id, "COMPLETED", artifact_dir)
+        complete_job(r, payload.run_id, "COMPLETED", str(artifact_dir))
         logger.info("Completed job %s", payload.run_id)
 
     except CancelledError as exc:
         logger.info("Job %s cancelled: %s", payload.run_id, exc)
         session.rollback()
         try:
-            artifact_dir = f"results/{payload.experiment_id}/runs/{payload.run_id}"
             run_record = session.get(RunRecord, payload.run_id)
             if run_record and run_record.status not in ("COMPLETED", "FAILED", "CANCELLED"):
                 run_record.status = "CANCELLED"  # type: ignore[assignment]
