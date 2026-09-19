@@ -43,6 +43,7 @@ figures/
 # IDE
 .idea/
 .vscode/
+.worktrees/
 *.swp
 *.swo
 
