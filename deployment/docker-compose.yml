@@ -8,7 +8,9 @@ services:
     environment:
       RESILIENCELAB_STORE: /data/results
       RESILIENCELAB_SERVER_MODE: "true"
-      RESILIENCELAB_DATABASE_URL: postgresql://resiliencelab:resiliencelab@postgres:5432/resiliencelab
+      RESILIENCELAB_AUTH_MODE: api_key
+      RESILIENCELAB_API_KEYS: ${RESILIENCELAB_API_KEYS:?Set RESILIENCELAB_API_KEYS in .env}
+      RESILIENCELAB_DATABASE_URL: ${RESILIENCELAB_DATABASE_URL:?Set RESILIENCELAB_DATABASE_URL in .env}
       RESILIENCELAB_REDIS_URL: redis://redis:6379/0
     volumes:
       - resiliencelab-data:/data
@@ -31,7 +33,7 @@ services:
     environment:
       RESILIENCELAB_STORE: /data/results
       RESILIENCELAB_SERVER_MODE: "true"
-      RESILIENCELAB_DATABASE_URL: postgresql://resiliencelab:resiliencelab@postgres:5432/resiliencelab
+      RESILIENCELAB_DATABASE_URL: ${RESILIENCELAB_DATABASE_URL:?Set RESILIENCELAB_DATABASE_URL in .env}
       RESILIENCELAB_REDIS_URL: redis://redis:6379/0
     volumes:
       - resiliencelab-data:/data
@@ -46,12 +48,10 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-resiliencelab}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-resiliencelab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-resiliencelab}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-resiliencelab}"]
       interval: 10s
@@ -62,8 +62,6 @@ services:
     image: redis:7-alpine
     volumes:
       - redisdata:/data
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s

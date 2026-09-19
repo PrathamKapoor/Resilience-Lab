@@ -18,7 +18,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, HTTPException,
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
-from resiliencelab.api.auth import Identity, get_identity, is_authenticated
+from resiliencelab.api.auth import (
+    Identity,
+    get_identity,
+    is_authenticated,
+    validate_server_auth_configuration,
+)
 from resiliencelab.api.errors import install_error_handlers, new_request_id
 from resiliencelab.api.schemas import (
     AnalysisResponse,
@@ -239,6 +244,7 @@ def create_app(runtime: LocalRuntime | None = None, server_mode: bool | None = N
         return response
 
     if use_server:
+        validate_server_auth_configuration()
         try:
             init_session_factory()
         except Exception as exc:

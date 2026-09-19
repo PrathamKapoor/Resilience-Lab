@@ -4,6 +4,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+RUN addgroup --system resiliencelab \
+    && adduser --system --ingroup resiliencelab resiliencelab \
+    && mkdir -p /data \
+    && chown resiliencelab:resiliencelab /data
+
 WORKDIR /app
 
 COPY pyproject.toml README.md LICENSE ./
@@ -16,8 +21,10 @@ RUN pip install --upgrade pip && pip install ".[parquet]"
 EXPOSE 8000
 
 ENV RESILIENCELAB_STORE=/data/results
-ENV RESILIENCELAB_SERVER_MODE=true
+ENV RESILIENCELAB_SERVER_MODE=false
 
 VOLUME ["/data"]
+
+USER resiliencelab
 
 CMD ["uvicorn", "resiliencelab.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

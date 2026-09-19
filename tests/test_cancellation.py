@@ -581,12 +581,14 @@ class TestAPICancellationLocal:
 
 
 class TestAPICancellationServer:
-    def test_cancel_server_mode_not_501(self):
+    def test_cancel_server_mode_not_501(self, monkeypatch: pytest.MonkeyPatch):
         pytest.importorskip("psycopg2")
         from resiliencelab.api.app import create_app
 
+        monkeypatch.setenv("RESILIENCELAB_AUTH_MODE", "api_key")
+        monkeypatch.setenv("RESILIENCELAB_API_KEYS", "cancellation-test-key")
         app = create_app(server_mode=True)
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-API-Key": "cancellation-test-key"})
         # Create experiment
         config = {
             "experiment": {"id": "exp_srv", "name": "srv"},

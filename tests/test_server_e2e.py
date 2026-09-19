@@ -46,6 +46,14 @@ pytestmark = pytest.mark.skipif(
     reason="PostgreSQL or Redis not available for E2E testing",
 )
 
+
+@pytest.fixture(autouse=True)
+def _configure_server_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Server-mode tests must exercise the secure production default."""
+    monkeypatch.setenv("RESILIENCELAB_AUTH_MODE", "api_key")
+    monkeypatch.setenv("RESILIENCELAB_API_KEYS", "e2e-test-key")
+
+
 # Ensure clean schema before tests
 if _infra_available:
     from resiliencelab.controlplane.models import Base
@@ -118,7 +126,7 @@ def _make_client() -> TestClient:
 
     app = create_app(server_mode=True)
     _ensure_worker()
-    return TestClient(app)
+    return TestClient(app, headers={"X-API-Key": "e2e-test-key"})
 
 
 def _wait_for_status(
