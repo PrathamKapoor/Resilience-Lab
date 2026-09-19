@@ -250,6 +250,23 @@ class TestE2ESubmitComplete:
         assert analysis.status_code == 200
         assert analysis.json()["analysis"]
 
+    def test_api_rejects_tampered_artifact(self) -> None:
+        client = _make_client()
+        exp_id = _next_id("tamper")
+        client.post("/api/v1/experiments", json={"config": _tiny_config(exp_id)})
+        assert _wait_for_status(client, exp_id, {"COMPLETED", "FAILED"}) == "COMPLETED"
+
+        from pathlib import Path
+
+        run = client.get(f"/api/v1/experiments/{exp_id}/runs").json()["runs"][0]
+        target = Path(run["artifact_path"]) / "experiment.json"
+        original = target.read_text()
+        target.write_text(original + "\n ")
+        try:
+            assert client.get(f"/api/v1/experiments/{exp_id}/metrics").status_code == 409
+        finally:
+            target.write_text(original)
+
 
 # ---------------------------------------------------------------------------
 # E2E 2: Submit -> Cancel

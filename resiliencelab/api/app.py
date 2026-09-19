@@ -88,6 +88,7 @@ from resiliencelab.controlplane.repositories import (
 from resiliencelab.core.cancellation import CancellationToken
 from resiliencelab.core.config import ConfigValidationError, dump_yaml, parse_experiment
 from resiliencelab.core.schema import ExperimentSpec
+from resiliencelab.experiments.provenance import hash_file
 from resiliencelab.experiments.registry import ExperimentRegistry
 from resiliencelab.experiments.report import automatic_analysis, build_report
 from resiliencelab.experiments.result import ExperimentResult
@@ -237,6 +238,15 @@ def _artifact_file_or_404(base: Path, relative_path: str) -> Path:
     target = base / relative_path
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"artifact file not found: {relative_path}")
+    manifest_path = base / "manifest.json"
+    if not manifest_path.is_file():
+        raise HTTPException(status_code=404, detail="artifact manifest not found")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    expected_hash = manifest.get("files", {}).get(relative_path)
+    if expected_hash is None:
+        raise HTTPException(status_code=409, detail="artifact file is not tracked by its manifest")
+    if hash_file(str(target)) != expected_hash:
+        raise HTTPException(status_code=409, detail="artifact integrity check failed")
     return target
 
 
