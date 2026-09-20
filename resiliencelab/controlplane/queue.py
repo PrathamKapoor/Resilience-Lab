@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import cast
 
 import redis
 
@@ -21,7 +23,7 @@ def _resolve_redis_url() -> str:
 
 def get_redis_client(url: str | None = None) -> redis.Redis:
     resolved = url or _resolve_redis_url()
-    return redis.from_url(resolved, decode_responses=True)  # type: ignore[no-any-return,no-untyped-call]
+    return redis.from_url(resolved, decode_responses=True)
 
 
 @dataclass
@@ -125,15 +127,24 @@ def complete_job(
     if artifact_path:
         mapping["artifact_path"] = artifact_path
     pipe = r.pipeline()
-    pipe.hset(_job_prefix + job_id, mapping=mapping)
+    pipe.hset(
+        _job_prefix + job_id,
+        mapping=cast(
+            Mapping[
+                bytes | bytearray | memoryview[int] | str | int | float,
+                bytes | bytearray | memoryview[int] | str | int | float,
+            ],
+            mapping,
+        ),
+    )
     pipe.lrem(_processing_key, 1, job_id)
     pipe.execute()
 
 
 def requeue_stuck_jobs(r: redis.Redis, max_age_seconds: int = 600) -> int:
     stuck: list[str] = []
-    for item in r.lrange(_processing_key, 0, -1):  # type: ignore[union-attr]
-        job_id = item if isinstance(item, str) else item.decode()  # type: ignore[attr-defined,unused-ignore]
+    for item in r.lrange(_processing_key, 0, -1):
+        job_id = item if isinstance(item, str) else item.decode()
         data = r.hget(_job_prefix + job_id, "payload")
         if data is None:
             stuck.append(job_id)
