@@ -8,9 +8,9 @@ export class ApiError extends Error {
 }
 
 async function request(path) {
-  const localApiKey = import.meta.env.MODE === 'production'
-    ? undefined
-    : import.meta.env.VITE_RESILIENCELAB_API_KEY;
+  const localApiKey = import.meta.env.DEV
+    ? import.meta.env.VITE_RESILIENCELAB_API_KEY
+    : undefined;
   const response = await fetch(path, {
     credentials: 'same-origin',
     ...(localApiKey ? { headers: { 'X-API-Key': localApiKey } } : {}),

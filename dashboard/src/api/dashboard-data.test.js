@@ -6,9 +6,25 @@ import { getJson } from './client';
 import {
   deriveDashboardMetrics,
   deriveRecommendation,
+  getExperimentStatus,
   listExperiments,
   loadExperimentDashboard,
 } from './dashboard-data';
+
+function buildDashboardBundle(extraEnv = {}, viteArgs = []) {
+  const dashboardRoot = process.cwd();
+  execFileSync(
+    process.execPath,
+    [join(dashboardRoot, 'node_modules', 'vite', 'bin', 'vite.js'), 'build', ...viteArgs],
+    {
+      cwd: dashboardRoot,
+      env: { ...process.env, NODE_ENV: 'production', ...extraEnv },
+      stdio: 'pipe',
+    },
+  );
+  const assets = readdirSync(join(dashboardRoot, 'dist', 'assets'));
+  return assets.map((asset) => readFileSync(join(dashboardRoot, 'dist', 'assets', asset), 'utf8')).join('');
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -75,6 +91,22 @@ test('returns experiment summaries from the documented list endpoint', async () 
   await expect(listExperiments()).resolves.toEqual([{ id: 'demo' }]);
 });
 
+test('loads status from the documented experiment status endpoint', async () => {
+  const status = {
+    id: 'demo',
+    status: 'RUNNING',
+    error: null,
+    cancellation_reason: null,
+    runs: [{ run_id: 'demo-0', status: 'RUNNING' }],
+  };
+  vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+    ok: true,
+    text: () => Promise.resolve(JSON.stringify(status)),
+  })));
+
+  await expect(getExperimentStatus('demo')).resolves.toEqual(status);
+});
+
 test('sends a configured local API key only in development', async () => {
   vi.stubEnv('VITE_RESILIENCELAB_API_KEY', 'local-development-key');
   const fetchMock = vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }));
@@ -89,16 +121,18 @@ test('sends a configured local API key only in development', async () => {
 });
 
 test('keeps the configured local API key out of the production bundle', () => {
-  const dashboardRoot = process.cwd();
-  execFileSync(process.execPath, [join(dashboardRoot, 'node_modules', 'vite', 'bin', 'vite.js'), 'build'], {
-    cwd: dashboardRoot,
-    env: { ...process.env, VITE_RESILIENCELAB_API_KEY: 'local-development-key' },
-    stdio: 'pipe',
-  });
-  const assets = readdirSync(join(dashboardRoot, 'dist', 'assets'));
-  const bundle = assets.map((asset) => readFileSync(join(dashboardRoot, 'dist', 'assets', asset), 'utf8')).join('');
+  const bundle = buildDashboardBundle({ VITE_RESILIENCELAB_API_KEY: 'local-development-key' });
 
   expect(bundle).not.toContain('local-development-key');
+});
+
+test('keeps the local API key out of custom-mode production bundles', () => {
+  const bundle = buildDashboardBundle(
+    { VITE_RESILIENCELAB_API_KEY: 'staging-development-key' },
+    ['--mode', 'staging'],
+  );
+
+  expect(bundle).not.toContain('staging-development-key');
 });
 
 test('exposes a readable non-2xx API error', async () => {

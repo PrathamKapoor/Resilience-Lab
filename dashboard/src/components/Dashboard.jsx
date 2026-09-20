@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import GradientWaves from './GradientWaves';
 
 const STATE_COPY = {
@@ -58,6 +59,22 @@ function formatDate(value) {
   return Number.isNaN(date.getTime())
     ? value
     : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function useReportUrl(report) {
+  const [reportUrl, setReportUrl] = useState(null);
+
+  useEffect(() => {
+    if (typeof report !== 'string' || typeof URL.createObjectURL !== 'function') {
+      setReportUrl(null);
+      return undefined;
+    }
+    const url = URL.createObjectURL(new Blob([report], { type: 'text/markdown;charset=utf-8' }));
+    setReportUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [report]);
+
+  return reportUrl;
 }
 
 function writeExperimentToUrl(experimentId) {
@@ -227,9 +244,7 @@ function SignalsCard({ events }) {
 function CompletedDashboard({ data }) {
   const experiment = data.experiment || {};
   const updatedAt = formatDate(experiment.updated_at);
-  const reportHref = experiment.id
-    ? `/api/v1/experiments/${encodeURIComponent(experiment.id)}/report`
-    : null;
+  const reportHref = useReportUrl(data.report);
 
   return (
     <>

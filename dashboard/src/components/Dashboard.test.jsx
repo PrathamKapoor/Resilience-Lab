@@ -3,6 +3,60 @@ import { afterEach, expect, test, vi } from 'vitest';
 import Dashboard from './Dashboard';
 import GradientWaves from './GradientWaves';
 
+const EXPERIMENTS = [
+  { id: 'exp-1', name: 'Checkout resilience', status: 'completed' },
+  { id: 'exp-2', name: 'Search resilience', status: 'running' },
+];
+
+const COMPLETED_DATA = {
+  experiment: {
+    id: 'exp-1',
+    name: 'Checkout resilience',
+    description: 'Dependency latency fault under peak load.',
+    status: 'completed',
+    config_hash: '9ad31f',
+    updated_at: '2026-09-20T08:30:00Z',
+  },
+  metrics: {
+    availabilityPercent: 99.25,
+    p99LatencyMs: 212,
+    errorRatePercent: 0.75,
+    throughputPerSecond: 48.4,
+    recoveryTimeSeconds: null,
+  },
+  timeline: [[{ t: 0.5, availability: 1 }, { t: 1.5, availability: 0.91 }]],
+  events: [
+    { sequence: 3, event_type: 'FaultInjected', elapsed: 2.25, target_service: 'payments', metadata: {} },
+    { sequence: 7, event_type: 'FaultRecovered', elapsed: 5.5, target_service: 'payments', metadata: {} },
+  ],
+  analysis: 'RESULT SUMMARY\n\nPolicy: bounded-retry',
+  report: '# Experiment Report\n\n- **Policy**: bounded-retry',
+  recommendation: {
+    recommendation: null,
+    insufficientEvidence: true,
+    evidence: 'Insufficient recommendation evidence is available from this experiment.',
+  },
+};
+
+function installObjectUrlMock(urls = ['blob:report-one']) {
+  const NativeURL = URL;
+  class TestURL extends NativeURL {}
+  TestURL.createObjectURL = vi.fn();
+  urls.forEach((url) => TestURL.createObjectURL.mockReturnValueOnce(url));
+  TestURL.revokeObjectURL = vi.fn();
+  vi.stubGlobal('URL', TestURL);
+  return TestURL;
+}
+
+function readBlob(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => resolve(reader.result));
+    reader.addEventListener('error', () => reject(reader.error));
+    reader.readAsText(blob);
+  });
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -23,44 +77,14 @@ test.each([
   expect(screen.getByText(message)).toBeTruthy();
 });
 
-test('renders completed experiment evidence without inventing missing values', () => {
+test('renders completed experiment evidence without inventing missing values', async () => {
+  const ObjectURL = installObjectUrlMock();
   render(
     <Dashboard
-      experiments={[
-        { id: 'exp-1', name: 'Checkout resilience', status: 'completed' },
-        { id: 'exp-2', name: 'Search resilience', status: 'running' },
-      ]}
+      experiments={EXPERIMENTS}
       selectedId="exp-1"
       state="completed"
-      data={{
-        experiment: {
-          id: 'exp-1',
-          name: 'Checkout resilience',
-          description: 'Dependency latency fault under peak load.',
-          status: 'completed',
-          config_hash: '9ad31f',
-          updated_at: '2026-09-20T08:30:00Z',
-        },
-        metrics: {
-          availabilityPercent: 99.25,
-          p99LatencyMs: 212,
-          errorRatePercent: 0.75,
-          throughputPerSecond: 48.4,
-          recoveryTimeSeconds: null,
-        },
-        timeline: [[{ t: 0.5, availability: 1 }, { t: 1.5, availability: 0.91 }]],
-        events: [
-          { sequence: 3, event_type: 'FaultInjected', elapsed: 2.25, target_service: 'payments', metadata: {} },
-          { sequence: 7, event_type: 'FaultRecovered', elapsed: 5.5, target_service: 'payments', metadata: {} },
-        ],
-        analysis: 'RESULT SUMMARY\n\nPolicy: bounded-retry',
-        report: '# Experiment Report\n\n- **Policy**: bounded-retry',
-        recommendation: {
-          recommendation: null,
-          insufficientEvidence: true,
-          evidence: 'Insufficient recommendation evidence is available from this experiment.',
-        },
-      }}
+      data={COMPLETED_DATA}
     />,
   );
 
@@ -75,8 +99,29 @@ test('renders completed experiment evidence without inventing missing values', (
   expect(screen.getByText(/Insufficient recommendation evidence/)).toBeTruthy();
   expect(screen.getByRole('link', { name: /open full report/i })).toHaveProperty(
     'href',
-    'http://localhost:3000/api/v1/experiments/exp-1/report',
+    'blob:report-one',
   );
+  expect(await readBlob(ObjectURL.createObjectURL.mock.calls[0][0])).toBe(COMPLETED_DATA.report);
+});
+
+test('revokes managed report URLs when report content changes and on unmount', () => {
+  const ObjectURL = installObjectUrlMock(['blob:report-one', 'blob:report-two']);
+  const { rerender, unmount } = render(
+    <Dashboard experiments={EXPERIMENTS} selectedId="exp-1" state="completed" data={COMPLETED_DATA} />,
+  );
+
+  rerender(
+    <Dashboard
+      experiments={EXPERIMENTS}
+      selectedId="exp-1"
+      state="completed"
+      data={{ ...COMPLETED_DATA, report: `${COMPLETED_DATA.report}\n\nUpdated.` }}
+    />,
+  );
+  expect(ObjectURL.revokeObjectURL).toHaveBeenCalledWith('blob:report-one');
+
+  unmount();
+  expect(ObjectURL.revokeObjectURL).toHaveBeenCalledWith('blob:report-two');
 });
 
 test('selects an experiment through a labelled native control', () => {

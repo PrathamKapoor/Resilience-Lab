@@ -54,6 +54,10 @@ export async function listExperiments() {
   return Array.isArray(data?.experiments) ? data.experiments : [];
 }
 
+export function getExperimentStatus(id) {
+  return getJson(`${API_ROOT}/${encodeURIComponent(id)}/status`);
+}
+
 export async function loadExperimentDashboard(id) {
   const experimentId = encodeURIComponent(id);
   const basePath = `${API_ROOT}/${experimentId}`;
