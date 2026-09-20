@@ -27,9 +27,11 @@ Browser
 The Docker build uses a pinned `node:22.14.0-bookworm-slim` builder. It runs
 `npm ci` and `npm run build`, then copies only `/dashboard/dist` into the
 existing Python image with ownership assigned to the existing non-root
-`resiliencelab` user. The Python runtime retains its existing non-root user,
-data volume, and API-key server-mode defaults. Both Compose application
-services use the same locally tagged image.
+`resiliencelab` user. It also copies `alembic.ini` to the `/app` work directory,
+so the documented `api alembic upgrade head` Compose command can find its
+configuration. The Python runtime retains its existing non-root user, data
+volume, and API-key server-mode defaults. Both Compose application services use
+the same locally tagged image.
 
 ## API inputs
 
@@ -39,7 +41,7 @@ uses these existing authenticated, same-origin endpoints:
 | Purpose | Endpoint | Dashboard use |
 | --- | --- | --- |
 | Selector | `GET /api/v1/experiments` | Lists available experiments. |
-| Identity and state | `GET /api/v1/experiments/{id}` | Name, description, status, update time, and config hash. |
+| Identity and state | `GET /api/v1/experiments/{id}` | Name and description; server mode also returns stored status, update time, and config hash. |
 | Running state | `GET /api/v1/experiments/{id}/status` | Polls every five seconds until a terminal state, and stops while the tab is hidden. |
 | Run measurements | `GET /api/v1/experiments/{id}/metrics` | Supplies `metrics_per_run` for displayed means. |
 | Timeline buckets | `GET /api/v1/experiments/{id}/timeline` | Supplies the displayed run/bucket count. |
@@ -47,11 +49,12 @@ uses these existing authenticated, same-origin endpoints:
 | Narrative and analysis | `GET /api/v1/experiments/{id}/analysis`, `/report` | Supplies recorded policy text and a conditional recommendation. |
 
 All browser requests use `credentials: same-origin`. A development-only
-`VITE_RESILIENCELAB_API_KEY` can add `X-API-Key` through Vite; production code
-does not read or embed it. Server-mode Compose therefore needs a same-origin
-authentication gateway or session mechanism before protected dashboard data
-can be viewed in a browser. It is intentionally not safe to solve that by
-shipping an API key to the client.
+`VITE_RESILIENCELAB_API_KEY` is compiled into and exposed to the local browser
+bundle, where the client code adds `X-API-Key`; Vite's proxy is not a server-side
+secret boundary. Production code does not read or embed it. Server-mode Compose
+therefore needs a same-origin authentication gateway or session mechanism before
+protected dashboard data can be viewed in a browser. It is intentionally not
+safe to solve that by shipping an API key to the client.
 
 ## Metric provenance
 
@@ -89,10 +92,18 @@ cross-policy conclusion requires recorded comparison or interaction analysis.
 
 ## Reproducibility boundary
 
-The experiment header exposes the API's recorded configuration hash. Server
-artifacts retain the configuration, seeds, raw records, timelines, report,
-statistics, and SHA256 manifest. A matching manifest establishes recorded-file
-integrity, not scientific correctness, and seeded decisions do not make
-wall-clock metrics bit-identical. Use `resiliencelab reproduce <id>` against a
-CLI-created artifact bundle or the artifact APIs to inspect the retained
-evidence; do not treat the dashboard as an artifact verifier.
+In server mode, the experiment header exposes the API's recorded configuration
+hash. Local FastAPI mode stores submitted specifications and results only in
+memory: its experiment-detail endpoint can report `created` with an empty
+config hash even after the separate status endpoint reports completion. For a
+local judge demo, use the full report's recorded `Config SHA256` and the
+completion terminal, not that header, as the source of those claims.
+
+Server artifacts retain the configuration, seeds, raw records, timelines,
+report, statistics, and SHA256 manifest. A matching manifest establishes
+recorded-file integrity, not scientific correctness, and seeded decisions do
+not make wall-clock metrics bit-identical. The local API result disappears when
+its process stops; persistent artifacts belong to the CLI/server experiment
+workflow. Use `resiliencelab reproduce <id>` against a CLI-created artifact
+bundle or the artifact APIs to inspect retained evidence; do not treat the
+dashboard as an artifact verifier.

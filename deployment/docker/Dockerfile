@@ -22,7 +22,7 @@ RUN addgroup --system --gid 10001 resiliencelab \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml README.md LICENSE alembic.ini ./
 COPY resiliencelab ./resiliencelab
 COPY benchmarks ./benchmarks
 COPY configs ./configs

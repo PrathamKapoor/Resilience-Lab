@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-_default_url = "postgresql://resiliencelab:resiliencelab@127.0.0.1:5432/resiliencelab"
+_default_url = "postgresql+psycopg://resiliencelab:resiliencelab@127.0.0.1:5432/resiliencelab"
 
 
 def _resolve_db_url() -> str:

@@ -88,8 +88,11 @@ resiliencelab server status exp_demo
 ```
 
 `configs/example.yaml` has five sequential 60-second repetitions, so stage a
-completed run before a short demonstration. The dashboard polls a running
-experiment and loads its evidence once the status is `completed`.
+completed run before a short demonstration. In local mode the FastAPI process
+holds the result only in memory, and `resiliencelab server status exp_demo` is
+the source of the completed state. The dashboard loads evidence after that
+state, but its local experiment-detail header can still show `created` and no
+config hash; use the full report's recorded `Config SHA256` instead.
 
 To exercise FastAPI's production static serving locally, build the frontend
 first, then open `http://127.0.0.1:8000/dashboard`:
@@ -107,7 +110,9 @@ with `docker compose -f deployment/docker-compose.yml build`.
 
 Docker Compose enables server mode, API-key authentication, PostgreSQL, Redis,
 and the worker. Set its required values in an untracked `.env`, start its data
-services, migrate, then start the application services:
+services, migrate, then start the application services. Copy `.env.example`;
+its database URL explicitly selects the installed psycopg3 SQLAlchemy driver
+with `postgresql+psycopg://`:
 
 ```bash
 docker compose -f deployment/docker-compose.yml up -d postgres redis
@@ -123,7 +128,9 @@ protected `/api/v1` data routes. Put an authenticated same-origin gateway or
 session mechanism in front of it before using the server-mode dashboard; do
 not place `RESILIENCELAB_API_KEYS` or `VITE_RESILIENCELAB_API_KEY` in a
 production bundle. `VITE_RESILIENCELAB_API_KEY` is development-only and may be
-used by Vite's local proxy when testing a protected API.
+used when testing a protected API through Vite. It is compiled into and exposed
+to the local browser bundle; Vite's proxy does not keep that header server-side.
+Use only a non-production key for this local workflow.
 
 Metric provenance and dashboard data flow are documented in
 [`docs/architecture-dashboard.md`](docs/architecture-dashboard.md). The
