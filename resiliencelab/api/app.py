@@ -144,6 +144,16 @@ def _dashboard_asset(path: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+def _dashboard_cache_control(target: Path) -> str:
+    """Classify cacheability from the resolved in-build target, never the request path."""
+    relative_target = target.resolve().relative_to(DASHBOARD_DIST.resolve())
+    if target.suffix.lower() == ".html":
+        return "no-cache"
+    if relative_target.parts and relative_target.parts[0] == "assets":
+        return "public, max-age=31536000, immutable"
+    return "no-cache"
+
+
 def _dashboard_response(path: str = "") -> Response:
     """Serve one Vite asset or the SPA entry point for a dashboard client route."""
     index = DASHBOARD_DIST / "index.html"
@@ -152,10 +162,7 @@ def _dashboard_response(path: str = "") -> Response:
 
     asset = _dashboard_asset(path) if path else None
     if asset is not None:
-        cache_control = (
-            "public, max-age=31536000, immutable" if path.startswith("assets/") else "no-cache"
-        )
-        return FileResponse(asset, headers={"Cache-Control": cache_control})
+        return FileResponse(asset, headers={"Cache-Control": _dashboard_cache_control(asset)})
 
     return FileResponse(index, headers={"Cache-Control": "no-cache"})
 

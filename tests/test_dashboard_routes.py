@@ -64,6 +64,17 @@ def test_dashboard_hashed_asset_is_immutable_cacheable(built_dashboard_client: T
     assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
 
 
+def test_dashboard_encoded_asset_traversal_does_not_immutably_cache_entry(
+    built_dashboard_client: TestClient,
+) -> None:
+    """Classifying cacheability from the raw URL could freeze the HTML entry."""
+    response = built_dashboard_client.get("/dashboard/assets/%2e%2e/index.html")
+
+    assert response.status_code == 200
+    assert response.text == "<main>Resilience dashboard</main>"
+    assert response.headers["cache-control"] == "no-cache"
+
+
 def test_dashboard_is_explicit_when_build_is_missing(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
