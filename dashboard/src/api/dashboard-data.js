@@ -61,7 +61,10 @@ export async function loadExperimentDashboard(id) {
     getJson(basePath),
     getJson(`${basePath}/metrics`),
     getJson(`${basePath}/timeline`),
-    getJson(`${basePath}/events`),
+    getJson(`${basePath}/events`).catch((error) => {
+      if (error?.status === 404) return null;
+      throw error;
+    }),
     getJson(`${basePath}/analysis`),
     getText(`${basePath}/report`),
   ]);

@@ -1,4 +1,8 @@
+import { execFileSync } from 'node:child_process';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
+import { getJson } from './client';
 import {
   deriveDashboardMetrics,
   deriveRecommendation,
@@ -8,6 +12,7 @@ import {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 test('aggregates named metrics without inventing missing data', () => {
@@ -68,4 +73,63 @@ test('returns experiment summaries from the documented list endpoint', async () 
   })));
 
   await expect(listExperiments()).resolves.toEqual([{ id: 'demo' }]);
+});
+
+test('sends a configured local API key only in development', async () => {
+  vi.stubEnv('VITE_RESILIENCELAB_API_KEY', 'local-development-key');
+  const fetchMock = vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve('{}') }));
+  vi.stubGlobal('fetch', fetchMock);
+
+  await getJson('/api/v1/experiments');
+
+  expect(fetchMock).toHaveBeenCalledWith('/api/v1/experiments', {
+    credentials: 'same-origin',
+    headers: { 'X-API-Key': 'local-development-key' },
+  });
+});
+
+test('keeps the configured local API key out of the production bundle', () => {
+  const dashboardRoot = process.cwd();
+  execFileSync(process.execPath, [join(dashboardRoot, 'node_modules', 'vite', 'bin', 'vite.js'), 'build'], {
+    cwd: dashboardRoot,
+    env: { ...process.env, VITE_RESILIENCELAB_API_KEY: 'local-development-key' },
+    stdio: 'pipe',
+  });
+  const assets = readdirSync(join(dashboardRoot, 'dist', 'assets'));
+  const bundle = assets.map((asset) => readFileSync(join(dashboardRoot, 'dist', 'assets', asset), 'utf8')).join('');
+
+  expect(bundle).not.toContain('local-development-key');
+});
+
+test('exposes a readable non-2xx API error', async () => {
+  vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+    ok: false,
+    status: 403,
+    statusText: 'Forbidden',
+    text: () => Promise.resolve(JSON.stringify({ detail: 'dashboard access denied' })),
+  })));
+
+  await expect(getJson('/api/v1/experiments')).rejects.toMatchObject({
+    name: 'ApiError',
+    status: 403,
+    detail: 'dashboard access denied',
+    message: 'Request failed (403): dashboard access denied',
+  });
+});
+
+test('continues without events when the optional endpoint is unavailable', async () => {
+  const payloads = new Map([
+    ['/api/v1/experiments/demo', { experiment: { id: 'demo' } }],
+    ['/api/v1/experiments/demo/metrics', { metrics_per_run: [] }],
+    ['/api/v1/experiments/demo/timeline', { timeline: [] }],
+    ['/api/v1/experiments/demo/analysis', { analysis: {} }],
+  ]);
+  vi.stubGlobal('fetch', vi.fn((path) => Promise.resolve(path.endsWith('/events')
+    ? { ok: false, status: 404, statusText: 'Not Found', text: () => Promise.resolve('Not Found') }
+    : { ok: true, text: () => Promise.resolve(path.endsWith('/report') ? '' : JSON.stringify(payloads.get(path))) })));
+
+  await expect(loadExperimentDashboard('demo')).resolves.toMatchObject({
+    experiment: { id: 'demo' },
+    events: null,
+  });
 });

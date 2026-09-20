@@ -8,7 +8,11 @@ export class ApiError extends Error {
 }
 
 async function request(path) {
-  const response = await fetch(path, { credentials: 'same-origin' });
+  const localApiKey = import.meta.env.DEV ? import.meta.env.VITE_RESILIENCELAB_API_KEY : undefined;
+  const response = await fetch(path, {
+    credentials: 'same-origin',
+    ...(localApiKey ? { headers: { 'X-API-Key': localApiKey } } : {}),
+  });
   const text = await response.text();
 
   if (!response.ok) {
