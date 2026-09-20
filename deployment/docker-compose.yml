@@ -1,5 +1,6 @@
 services:
   api:
+    image: resiliencelab:local
     build:
       context: ..
       dockerfile: deployment/docker/Dockerfile
@@ -26,6 +27,7 @@ services:
       retries: 5
 
   worker:
+    image: resiliencelab:local
     build:
       context: ..
       dockerfile: deployment/docker/Dockerfile

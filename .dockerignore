@@ -1,0 +1,16 @@
+.git
+.worktrees
+.superpowers
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.hypothesis
+results
+dashboard/node_modules
+dashboard/dist
+dashboard/.vite

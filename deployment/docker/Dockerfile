@@ -1,3 +1,14 @@
+FROM node:22.14.0-bookworm-slim AS dashboard-builder
+
+WORKDIR /dashboard
+
+COPY dashboard/package.json dashboard/package-lock.json ./
+RUN npm ci
+
+COPY dashboard ./
+RUN npm run build
+
+
 FROM python:3.13-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -15,6 +26,7 @@ COPY pyproject.toml README.md LICENSE ./
 COPY resiliencelab ./resiliencelab
 COPY benchmarks ./benchmarks
 COPY configs ./configs
+COPY --from=dashboard-builder --chown=resiliencelab:resiliencelab /dashboard/dist ./dashboard/dist
 
 RUN pip install --upgrade pip && pip install ".[parquet]"
 

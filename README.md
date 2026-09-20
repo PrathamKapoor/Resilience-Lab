@@ -60,6 +60,75 @@ make test
 
 ## Deployment
 
+### Dashboard
+
+The React dashboard is served by FastAPI at [`/dashboard`](/dashboard) after a
+production build. It presents one selected experiment's recorded metrics,
+timeline markers, events, analysis, and report; it does not add a dashboard
+database or change experiment execution.
+
+For local development, use two terminals from the repository root:
+
+```bash
+# terminal 1: local FastAPI mode has anonymous access and in-memory experiments
+uvicorn resiliencelab.api.app:app --host 127.0.0.1 --port 8000
+
+# terminal 2: Vite proxies /api to terminal 1
+npm --prefix dashboard ci
+npm --prefix dashboard run dev
+```
+
+Open `http://127.0.0.1:5173/dashboard/`. To add and run the existing example
+through the same API the dashboard reads, use a third terminal:
+
+```bash
+resiliencelab server submit configs/example.yaml
+resiliencelab server run exp_demo
+resiliencelab server status exp_demo
+```
+
+`configs/example.yaml` has five sequential 60-second repetitions, so stage a
+completed run before a short demonstration. The dashboard polls a running
+experiment and loads its evidence once the status is `completed`.
+
+To exercise FastAPI's production static serving locally, build the frontend
+first, then open `http://127.0.0.1:8000/dashboard`:
+
+```bash
+npm --prefix dashboard ci
+npm --prefix dashboard run build
+uvicorn resiliencelab.api.app:app --host 127.0.0.1 --port 8000
+```
+
+The production image builds the frontend in the pinned
+`node:22.14.0-bookworm-slim` stage with `npm ci` and `npm run build`. Only
+`dashboard/dist` is copied into the non-root Python runtime image. Build it
+with `docker compose -f deployment/docker-compose.yml build`.
+
+Docker Compose enables server mode, API-key authentication, PostgreSQL, Redis,
+and the worker. Set its required values in an untracked `.env`, start its data
+services, migrate, then start the application services:
+
+```bash
+docker compose -f deployment/docker-compose.yml up -d postgres redis
+docker compose -f deployment/docker-compose.yml run --rm --no-deps \
+  api alembic upgrade head
+docker compose -f deployment/docker-compose.yml up -d api worker
+```
+
+The browser bundle deliberately contains no production API key. As a result,
+the Compose configuration serves the dashboard assets at `/dashboard`, but it
+does **not** provide a browser login or API-key injection mechanism for its
+protected `/api/v1` data routes. Put an authenticated same-origin gateway or
+session mechanism in front of it before using the server-mode dashboard; do
+not place `RESILIENCELAB_API_KEYS` or `VITE_RESILIENCELAB_API_KEY` in a
+production bundle. `VITE_RESILIENCELAB_API_KEY` is development-only and may be
+used by Vite's local proxy when testing a protected API.
+
+Metric provenance and dashboard data flow are documented in
+[`docs/architecture-dashboard.md`](docs/architecture-dashboard.md). The
+repeatable 180-second judge flow is in [`docs/demo-script.md`](docs/demo-script.md).
+
 ```bash
 docker compose -f deployment/docker-compose.yml up
 ```

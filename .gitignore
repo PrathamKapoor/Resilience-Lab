@@ -15,6 +15,7 @@ env/
 .pdm.toml
 poetry.lock
 node_modules/
+.vite/
 
 # Test / coverage
 .pytest_cache/
