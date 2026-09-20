@@ -84,6 +84,19 @@ test('restores the selected experiment from the initial URL', async () => {
   expect(window.location.search).toBe('?experiment=exp-2');
 });
 
+test('loads a direct URL experiment even when it is absent from the listed page', async () => {
+  window.history.replaceState({}, '', '/dashboard/?experiment=exp-2');
+  listExperiments.mockResolvedValue([EXPERIMENTS[0]]);
+  getExperimentStatus.mockResolvedValue({ id: 'exp-2', status: 'COMPLETED' });
+  loadExperimentDashboard.mockResolvedValue(completedDashboard('exp-2'));
+
+  render(<DashboardApp />);
+
+  expect(await screen.findByRole('heading', { name: 'Experiment two' })).toBeTruthy();
+  expect(loadExperimentDashboard).toHaveBeenCalledWith('exp-2');
+  expect(window.location.search).toBe('?experiment=exp-2');
+});
+
 test('follows browser back and forward selection changes', async () => {
   listExperiments.mockResolvedValue(EXPERIMENTS);
   loadExperimentDashboard.mockImplementation((id) => Promise.resolve(completedDashboard(id)));

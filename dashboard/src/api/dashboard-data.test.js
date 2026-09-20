@@ -48,6 +48,13 @@ test('states when recommendation evidence is insufficient', () => {
     .toMatchObject({ recommendation: null, insufficientEvidence: true });
 });
 
+test('treats the backend automatic-analysis placeholder as insufficient evidence', () => {
+  expect(deriveRecommendation(
+    { metrics: {} },
+    'Recommendation: see comparison and interaction analysis for evidence-based ranking.',
+  )).toMatchObject({ recommendation: null, insufficientEvidence: true });
+});
+
 test('loads only documented experiment dashboard endpoints with same-origin credentials', async () => {
   const payloads = new Map([
     ['/api/v1/experiments/demo', { experiment: { id: 'demo' } }],
@@ -89,6 +96,30 @@ test('returns experiment summaries from the documented list endpoint', async () 
   })));
 
   await expect(listExperiments()).resolves.toEqual([{ id: 'demo' }]);
+});
+
+test('follows experiment pagination through the final page', async () => {
+  const responses = new Map([
+    ['/api/v1/experiments?offset=0&limit=200', {
+      experiments: [{ id: 'first' }],
+      pagination: { offset: 0, has_more: true },
+    }],
+    ['/api/v1/experiments?offset=1&limit=200', {
+      experiments: [{ id: 'second' }],
+      pagination: { offset: 1, has_more: false },
+    }],
+  ]);
+  const fetchMock = vi.fn((path) => Promise.resolve({
+    ok: true,
+    text: () => Promise.resolve(JSON.stringify(responses.get(path))),
+  }));
+  vi.stubGlobal('fetch', fetchMock);
+
+  await expect(listExperiments()).resolves.toEqual([{ id: 'first' }, { id: 'second' }]);
+  expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+    '/api/v1/experiments?offset=0&limit=200',
+    '/api/v1/experiments?offset=1&limit=200',
+  ]);
 });
 
 test('loads status from the documented experiment status endpoint', async () => {

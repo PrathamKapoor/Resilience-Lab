@@ -1,6 +1,8 @@
 import { getJson, getText } from './client';
 
 const API_ROOT = '/api/v1/experiments';
+const PAGE_SIZE = 200;
+const MAX_EXPERIMENT_PAGES = 100;
 
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 
@@ -36,7 +38,9 @@ export function deriveRecommendation(analysis, report) {
     ? report.match(/^Recommendation:\s*(.+)$/im)?.[1]?.trim() || ''
     : '';
   const recommendation = explicitRecommendation || reportRecommendation;
-  const isPlaceholder = /^see (?:the )?(?:comparison )?analysis/i.test(recommendation);
+  const normalizedRecommendation = recommendation.toLowerCase().replace(/\s+/g, ' ').trim();
+  const isPlaceholder = /^see (?:the )?(?:comparison )?analysis/.test(normalizedRecommendation)
+    || /^see comparison and interaction analysis for evidence-based ranking\.?$/.test(normalizedRecommendation);
 
   if (!recommendation || isPlaceholder) {
     return {
@@ -50,8 +54,22 @@ export function deriveRecommendation(analysis, report) {
 }
 
 export async function listExperiments() {
-  const data = await getJson(API_ROOT);
-  return Array.isArray(data?.experiments) ? data.experiments : [];
+  const experiments = [];
+  let offset = 0;
+
+  for (let page = 0; page < MAX_EXPERIMENT_PAGES; page += 1) {
+    const data = await getJson(`${API_ROOT}?offset=${offset}&limit=${PAGE_SIZE}`);
+    const pageExperiments = Array.isArray(data?.experiments) ? data.experiments : [];
+    experiments.push(...pageExperiments);
+
+    if (!data?.pagination?.has_more) return experiments;
+
+    const nextOffset = offset + pageExperiments.length;
+    if (nextOffset <= offset) throw new Error('Experiment pagination did not advance.');
+    offset = nextOffset;
+  }
+
+  throw new Error('Experiment pagination exceeded the safe request limit.');
 }
 
 export function getExperimentStatus(id) {

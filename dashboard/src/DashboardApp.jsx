@@ -26,9 +26,7 @@ export function stateForError(error) {
 
 function selectedExperimentFromUrl(experiments) {
   const requestedId = new URL(window.location.href).searchParams.get('experiment');
-  return experiments.some((experiment) => experiment.id === requestedId)
-    ? requestedId
-    : experiments[0]?.id || null;
+  return requestedId || experiments[0]?.id || null;
 }
 
 function replaceSelectedExperiment(experimentId) {
@@ -52,11 +50,11 @@ export default function DashboardApp() {
       .then((items) => {
         if (!active) return;
         setExperiments(items);
-        if (items.length === 0) {
+        const nextId = selectedExperimentFromUrl(items);
+        if (!nextId) {
           setState('empty');
           return;
         }
-        const nextId = selectedExperimentFromUrl(items);
         replaceSelectedExperiment(nextId);
         setSelectedId(nextId);
       })
@@ -93,6 +91,11 @@ export default function DashboardApp() {
       try {
         const dashboardData = await loadExperimentDashboard(selectedId);
         if (!active) return;
+        if (dashboardData.experiment?.id) {
+          setExperiments((items) => items.some((experiment) => experiment.id === dashboardData.experiment.id)
+            ? items
+            : [...items, dashboardData.experiment]);
+        }
         setData(dashboardData);
         setState('completed');
       } catch (requestError) {
