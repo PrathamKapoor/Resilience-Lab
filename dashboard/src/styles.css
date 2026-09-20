@@ -1,0 +1,22 @@
+:root {
+  color: #23211d;
+  background: #faf7f0;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: #faf7f0;
+}
+
+.dashboard-shell {
+  min-height: 100vh;
+  padding: 2rem;
+}
