@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from sqlalchemy.orm import Session
 
 from resiliencelab import __version__
@@ -106,6 +106,9 @@ MAX_CONFIG_BODY_BYTES = 1_048_576  # 1 MB
 MAX_EXPERIMENT_ID_LENGTH = 256
 MAX_EXPERIMENT_REPETITIONS = 10_000
 
+DASHBOARD_DIST = Path(__file__).resolve().parents[2] / "dashboard" / "dist"
+DASHBOARD_BUILD_COMMAND = "npm --prefix dashboard run build"
+
 
 def _is_server_mode() -> bool:
     return os.environ.get("RESILIENCELAB_SERVER_MODE", "").lower() in ("1", "true", "yes")
@@ -119,6 +122,42 @@ def _validate_experiment_id(experiment_id: str) -> None:
         )
     if "/" in experiment_id or "\0" in experiment_id:
         raise HTTPException(status_code=422, detail="Experiment ID contains invalid characters")
+
+
+def _dashboard_unavailable() -> PlainTextResponse:
+    """Tell operators how to create the dashboard build required for serving."""
+    return PlainTextResponse(
+        f"Dashboard build is unavailable. Run: {DASHBOARD_BUILD_COMMAND}",
+        status_code=503,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _dashboard_asset(path: str) -> Path | None:
+    """Return a built dashboard file only when its resolved path stays in the build."""
+    dist = DASHBOARD_DIST.resolve()
+    candidate = (dist / path).resolve()
+    try:
+        candidate.relative_to(dist)
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def _dashboard_response(path: str = "") -> Response:
+    """Serve one Vite asset or the SPA entry point for a dashboard client route."""
+    index = DASHBOARD_DIST / "index.html"
+    if not index.is_file():
+        return _dashboard_unavailable()
+
+    asset = _dashboard_asset(path) if path else None
+    if asset is not None:
+        cache_control = (
+            "public, max-age=31536000, immutable" if path.startswith("assets/") else "no-cache"
+        )
+        return FileResponse(asset, headers={"Cache-Control": cache_control})
+
+    return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +407,15 @@ def create_app(runtime: LocalRuntime | None = None, server_mode: bool | None = N
         _register_local_routes(v1, runtime)
 
     app.include_router(v1)
+
+    @app.get("/dashboard", include_in_schema=False)
+    async def dashboard() -> Response:
+        return _dashboard_response()
+
+    @app.get("/dashboard/{path:path}", include_in_schema=False)
+    async def dashboard_path(path: str) -> Response:
+        return _dashboard_response(path)
+
     return app
 
 
