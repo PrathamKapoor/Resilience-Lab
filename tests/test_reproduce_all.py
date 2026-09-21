@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import click
 from typer.testing import CliRunner
 
 from resiliencelab.cli.app import app
@@ -40,7 +41,9 @@ def _tiny_benchmark(directory: Path, bench_id: str) -> None:
 def test_reproduce_all_help_mentions_all() -> None:
     result = RUNNER.invoke(app, ["reproduce", "--help"])
     assert result.exit_code == 0
-    assert "--all" in result.output
+    # Typer forces styled output when GITHUB_ACTIONS is set, which splits "--all"
+    # across ANSI escape codes; compare against the unstyled text.
+    assert "--all" in click.unstyle(result.output)
 
 
 def test_reproduce_all_success_writes_manifest_and_artifacts(tmp_path: Path) -> None:
