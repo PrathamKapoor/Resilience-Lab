@@ -6,7 +6,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any
 
 import redis
 
@@ -134,7 +134,9 @@ def complete_job(
 
 def requeue_stuck_jobs(r: redis.Redis, max_age_seconds: int = 600) -> int:
     stuck: list[str] = []
-    for item in cast(list[str | bytes], r.lrange(_processing_key, 0, -1)):
+    # redis-py's stubs type lrange as list or Awaitable[list] depending on the release.
+    processing: Any = r.lrange(_processing_key, 0, -1)
+    for item in processing:
         job_id = item if isinstance(item, str) else item.decode()
         data = r.hget(_job_prefix + job_id, "payload")
         if data is None:
