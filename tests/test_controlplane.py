@@ -245,6 +245,39 @@ class TestQueue:
         status = get_job_status(r, payload.run_id)
         assert status == "COMPLETED"
 
+    def test_complete_job_without_redis_server(self):
+        """Exercise complete_job with a stub so it is covered when Redis is unavailable."""
+
+        class StubPipeline:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+
+            def hset(self, *args: object, **kwargs: object) -> None:
+                self.calls.append(("hset", args, kwargs))
+
+            def lrem(self, *args: object) -> None:
+                self.calls.append(("lrem", args, {}))
+
+            def execute(self) -> list[object]:
+                return []
+
+        class StubRedis:
+            def __init__(self) -> None:
+                self.pipe = StubPipeline()
+
+            def pipeline(self) -> StubPipeline:
+                return self.pipe
+
+        stub = StubRedis()
+        complete_job(stub, "exp/run-0", "COMPLETED", "/artifacts")
+
+        assert stub.pipe.calls[0] == (
+            "hset",
+            ("resiliencelab:job:exp/run-0",),
+            {"mapping": {"status": "COMPLETED", "artifact_path": "/artifacts"}},
+        )
+        assert stub.pipe.calls[1][0] == "lrem"
+
     def test_requeue_stuck_jobs(self, redis_client):
         r = redis_client
         enqueue_experiment(r, "exp_stuck", "c: 1", "h", 1)

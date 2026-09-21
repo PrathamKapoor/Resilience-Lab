@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Any, cast
 
 import redis
 
@@ -23,7 +22,7 @@ def _resolve_redis_url() -> str:
 
 def get_redis_client(url: str | None = None) -> redis.Redis:
     resolved = url or _resolve_redis_url()
-    return redis.from_url(resolved, decode_responses=True)
+    return redis.Redis.from_url(resolved, decode_responses=True)
 
 
 @dataclass
@@ -123,27 +122,19 @@ def claim_job(r: redis.Redis, worker_id: str, timeout: int = 30) -> JobPayload |
 def complete_job(
     r: redis.Redis, job_id: str, status: str, artifact_path: str | None = None
 ) -> None:
-    mapping: dict[str, str] = {"status": status}
+    # redis-py's stubs type ``mapping`` differently across releases, so keep it loose.
+    mapping: dict[Any, Any] = {"status": status}
     if artifact_path:
         mapping["artifact_path"] = artifact_path
     pipe = r.pipeline()
-    pipe.hset(
-        _job_prefix + job_id,
-        mapping=cast(
-            Mapping[
-                bytes | bytearray | memoryview[int] | str | int | float,
-                bytes | bytearray | memoryview[int] | str | int | float,
-            ],
-            mapping,
-        ),
-    )
+    pipe.hset(_job_prefix + job_id, mapping=mapping)
     pipe.lrem(_processing_key, 1, job_id)
     pipe.execute()
 
 
 def requeue_stuck_jobs(r: redis.Redis, max_age_seconds: int = 600) -> int:
     stuck: list[str] = []
-    for item in r.lrange(_processing_key, 0, -1):
+    for item in cast(list[str | bytes], r.lrange(_processing_key, 0, -1)):
         job_id = item if isinstance(item, str) else item.decode()
         data = r.hget(_job_prefix + job_id, "payload")
         if data is None:
